@@ -1,0 +1,10 @@
+services:
+  nccrd-db:
+    container_name: TEST-nccrd-db
+    image: postgres:16.2
+    ports:
+      - "7357:5432"
+    environment:
+      - POSTGRES_USER=${NCCRD_DB_USER}
+      - POSTGRES_PASSWORD=${NCCRD_DB_PASS}
+    restart: always

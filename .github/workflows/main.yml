@@ -1,0 +1,51 @@
+name: CI
+
+on: [ push, pull_request ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out nccrd-server
+        uses: actions/checkout@v4
+        with:
+          path: nccrd-server
+
+      - name: Check out odp-core
+        uses: actions/checkout@v4
+        with:
+          repository: SAEON/odp-core
+          path: odp-core
+          ref: nccrd
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        working-directory: nccrd-server
+        run: |
+          python -m pip install --upgrade pip pip-tools
+          pip-sync
+          
+      - name: Set up testing environment
+        working-directory: nccrd-server/test
+        shell: bash
+        run: |
+          cp .env.test .env
+          docker compose up -d
+          sleep 30s
+
+      - name: Run the tests
+        working-directory: nccrd-server/test
+        run: |
+          coverage run -m pytest
+          coverage xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          directory: nccrd-server/test
+          token: ${{ secrets.CODECOV_TOKEN }}

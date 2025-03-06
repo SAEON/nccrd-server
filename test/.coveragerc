@@ -1,0 +1,13 @@
+[run]
+source =
+    nccrd.api.lib
+    nccrd.api.models
+    nccrd.api.routers
+    nccrd.db
+
+branch = True
+
+[report]
+exclude_lines =
+    pragma: no cover
+    assert False
