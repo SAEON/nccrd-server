@@ -5,6 +5,7 @@ import pathlib
 from dotenv import load_dotenv
 from sqlalchemy import text, event, DDL
 from sqlalchemy.exc import ProgrammingError
+# from nccrd.db.models import Vocabulary,Adaptaion,Mitigation,Submission
 
 from nccrd.db import Base, engine
 
@@ -43,3 +44,8 @@ def init_database_schema():
             logger.info('Created the database schema.')
     finally:
         os.chdir(cwd)
+
+
+if __name__ == '__main__':
+    print("Started ")
+    initialize()

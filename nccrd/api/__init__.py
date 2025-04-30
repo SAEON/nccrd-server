@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-# from nccrd.api.routers import ...
+from nccrd.api.routers import submission
 from nccrd.db import Session
 from nccrd.version import VERSION
 
@@ -11,6 +11,8 @@ app = FastAPI(
     docs_url='/swagger',
     redoc_url='/docs',
 )
+
+app.include_router(submission.router, prefix='/submission', tags=['Submission'])
 
 # app.include_router(survey.router, prefix='/survey', tags=['Survey'])
 # app.include_router(survey_download.router, prefix='/survey/download', tags=['Survey', 'Download'])

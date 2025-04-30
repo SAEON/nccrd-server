@@ -1,3 +1,4 @@
+from fileinput import close
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, scoped_session, sessionmaker
 
@@ -20,6 +21,13 @@ Session = scoped_session(
     )
 )
 
+
+def get_db():
+    db = Session()
+    try:
+        yield  db
+    finally:
+        close()
 
 class _Base:
     __table_args__ = {"schema": "nccrd"}
