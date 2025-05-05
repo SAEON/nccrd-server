@@ -24,6 +24,7 @@ class Submission(Base):
     # Project Funding
     funding_organization = Column(String)
     funding_type = Column(String)
+    # funding_type_other = Column(String)
     funding_amount = Column(Float)
     estimated_budget_cost = Column(String)
 
@@ -77,7 +78,6 @@ class Adaptaion(Base):
     impact_response = Column(String)
 
     #progress reports
-
 
 
 class Mitigation(Base):

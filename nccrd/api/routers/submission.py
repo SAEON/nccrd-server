@@ -1,11 +1,13 @@
 from typing import List, Optional,Union
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException,UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect
 from nccrd.api.models import SubmissionModel,SubmissionCreate,SubmissionUpdate,SubmissionResponse,MitigationResponse,AdaptationResponse
 from uuid import UUID
 from nccrd.db import get_db
 from nccrd.db.models import Submission,Adaptaion,Mitigation
+from openpyxl import load_workbook
+from io import BytesIO
 from datetime import datetime
 import traceback
 
@@ -396,3 +398,73 @@ def read_submission(submission_uuid: UUID, db: Session = Depends(get_db)):
 
     # 4. Return the submission with the nested related records.
     return submission
+
+@router.post("/upload-xlsx/")
+async def upload_xlsm(file: UploadFile = File(...),db: Session = Depends(get_db)):
+    try:
+        contents = await file.read()  # Read file as bytes
+        wb = load_workbook(BytesIO(contents), keep_vba=True)  # Load workbook with macros
+
+        sheet = wb['General project details']
+        submission_data = {}
+        for row in sheet.iter_rows(values_only=True):
+            title = row[0]
+            field_value = next((value for value in row[1:] if value is not None), None)
+            if field_value is not None:
+                # Mapping the data
+
+                if title == 'Title':
+                    submission_data['title'] = field_value
+                elif title == 'Indicate the type of measure':
+                    submission_data['intervention_measurement'] = field_value
+                elif title == 'Description':
+                    submission_data['description'] = field_value
+                elif title == 'Implementation status':
+                    submission_data['implementation_status'] = field_value
+                elif title == 'Implementing organization':
+                    submission_data['implementation_organization'] = field_value
+                elif title == 'Other implementing partners':
+                    submission_data['implementation_partners_other'] = field_value
+                elif title == 'Start year':
+                    submission_data['start_date'] = field_value
+                elif title == 'End year':
+                    submission_data['end_date'] = field_value
+                elif title == 'Link to project website':
+                    submission_data['link'] = field_value
+                elif title == 'Funding organization':
+                    submission_data['funding_organization'] = field_value
+                elif title == 'Type of funding':
+                    submission_data['funding_type'] = field_value
+                    # elif title == 'Type of funding (other)':
+                    #     submission_data['funding_type_other'] = field_value
+                elif title == 'Actual budget':
+                    submission_data['funding_amount'] = float(field_value)
+                elif title == 'Estimated budget range':
+                    submission_data['estimated_budget_cost'] = field_value
+                elif title == 'Name':
+                    submission_data['project_manager_name'] = field_value
+                elif title == 'Company/organization':
+                    submission_data['project_manager_organization'] = field_value
+                elif title == 'Position':
+                    submission_data['project_manager_position'] = field_value
+                elif title == 'Email address':
+                    submission_data['project_manager_email'] = field_value
+                elif title == 'Mobile number':
+                    submission_data['project_manager_mobile'] = field_value
+                # Continue for other relevant fields...
+
+                # Optionally, add geo_location data if provided
+        submission_data['geo_location'] = {
+            "type": "Point",
+            "coordinates": [30.374, -27.936]  # You can replace this with actual coordinates if available
+        }
+        print("submission data:",submission_data)
+            # Convert extracted data into SubmissionCreate model
+        submission_create = SubmissionCreate(**submission_data)
+        print(submission_create)
+        # Call the create_submission function
+        data = create_submission(submission_create, db)
+        return  {"Submission Created":data}
+
+    except Exception as e:
+        return {"error": str(e)}
