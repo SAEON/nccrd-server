@@ -5,7 +5,7 @@ import pathlib
 from dotenv import load_dotenv
 from sqlalchemy import text, event, DDL
 from sqlalchemy.exc import ProgrammingError
-# from nccrd.db.models import Vocabulary,Adaptaion,Mitigation,Submission
+from nccrd.db.models import Adaptaion,Mitigation,Submission
 
 from nccrd.db import Base, engine
 

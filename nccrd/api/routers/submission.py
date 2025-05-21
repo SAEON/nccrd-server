@@ -1,15 +1,20 @@
-from typing import List, Optional,Union
-from fastapi import APIRouter, Depends, HTTPException,UploadFile, File
+from typing import List, Optional, Union
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect
-from nccrd.api.models import SubmissionModel,SubmissionCreate,SubmissionUpdate,SubmissionResponse,MitigationResponse,AdaptationResponse
+from nccrd.api.models import SubmissionModel, SubmissionCreate, SubmissionUpdate, SubmissionResponse, \
+    MitigationResponse, AdaptationResponse
 from uuid import UUID
+
+from nccrd.const import NCCRDScope
 from nccrd.db import get_db
-from nccrd.db.models import Submission,Adaptaion,Mitigation
+from nccrd.db.models import Submission, Adaptaion, Mitigation
 from openpyxl import load_workbook
 from io import BytesIO
 from datetime import datetime
 import traceback
+
+from nccrd.api.lib.auth import Authorize
 
 router = APIRouter()
 
@@ -19,7 +24,7 @@ router = APIRouter()
     response_model=Union[SubmissionModel, List[SubmissionModel]],
     summary='List all submissions or a specific submissions by its ID'
 )
-async def get_submissions(
+async def get_submissions_list(
         submission_id: Optional[str] = None,
         db: Session = Depends(get_db)
 ):
@@ -95,11 +100,13 @@ def create_submission(submission: SubmissionCreate, db: Session = Depends(get_db
             detail=f"Submission creation failed. Error details: {str(e)}"
         )
 
+
 # Endpoint to get a list of all submissions.
 @router.get("/fetch_all", response_model=List[SubmissionModel])
 def read_submissions(db: Session = Depends(get_db)):
     submissions = db.query(Submission).all()
     return submissions
+
 
 # Endpoint to get a single submission by its UUID.
 @router.get("/fetch/{submission_uuid}", response_model=SubmissionModel)
@@ -109,9 +116,10 @@ def read_submission(submission_uuid: UUID, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Submission not found")
     return submission
 
+
 @router.patch("/update/{submission_uuid}")
 def update_submission(
-    submission_uuid: UUID, update_data: SubmissionUpdate, db: Session = Depends(get_db)
+        submission_uuid: UUID, update_data: SubmissionUpdate, db: Session = Depends(get_db)
 ):
     submission = db.query(Submission).filter(Submission.id == submission_uuid).first()
     if not submission:
@@ -363,7 +371,11 @@ def update_submission(
     db.refresh(submission)
     return submission
 
-@router.get("/read_submission/{submission_uuid}", response_model=SubmissionResponse)
+
+@router.get("/read_submission/{submission_uuid}",
+            response_model=SubmissionResponse,
+            dependencies=[Depends(Authorize(NCCRDScope.PROJECT_READ))],
+            )
 def read_submission(submission_uuid: UUID, db: Session = Depends(get_db)):
     # 1. Retrieve the submission using the auto-generated UUID.
     submission = db.query(Submission).filter(Submission.id == submission_uuid).first()
@@ -378,6 +390,7 @@ def read_submission(submission_uuid: UUID, db: Session = Depends(get_db)):
     # Normalize the intervention_measurement value.
     im_value = submission.intervention_measurement.strip().lower() if submission.intervention_measurement else ""
 
+    print("Value:", im_value)
     if im_value == "cross cutting":
         # Both records are applicable.
         submission.mitigation = mitigation
@@ -399,8 +412,9 @@ def read_submission(submission_uuid: UUID, db: Session = Depends(get_db)):
     # 4. Return the submission with the nested related records.
     return submission
 
+
 @router.post("/upload-xlsx/")
-async def upload_xlsm(file: UploadFile = File(...),db: Session = Depends(get_db)):
+async def upload_xlsm(file: UploadFile = File(...), db: Session = Depends(get_db)):
     try:
         contents = await file.read()  # Read file as bytes
         wb = load_workbook(BytesIO(contents), keep_vba=True)  # Load workbook with macros
@@ -458,13 +472,13 @@ async def upload_xlsm(file: UploadFile = File(...),db: Session = Depends(get_db)
             "type": "Point",
             "coordinates": [30.374, -27.936]  # You can replace this with actual coordinates if available
         }
-        print("submission data:",submission_data)
-            # Convert extracted data into SubmissionCreate model
+        print("submission data:", submission_data)
+        # Convert extracted data into SubmissionCreate model
         submission_create = SubmissionCreate(**submission_data)
         print(submission_create)
         # Call the create_submission function
         data = create_submission(submission_create, db)
-        return  {"Submission Created":data}
+        return {"Submission Created": data}
 
     except Exception as e:
         return {"error": str(e)}
