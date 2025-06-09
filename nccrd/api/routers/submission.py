@@ -20,7 +20,7 @@ router = APIRouter()
 
 
 @router.get(
-    '/all_submissions',
+    '/list_submission',
     response_model=Union[SubmissionModel, List[SubmissionModel]],
     summary='List all submissions or a specific submissions by its ID'
 )
@@ -47,105 +47,45 @@ async def get_submissions_list(
         return submissions
 
 
-@router.post("/create_submission")
-def create_submission(submission: SubmissionCreate, db: Session = Depends(get_db)):
-    # Create a new Submission instance.
-    # Notice that you do not need to provide an id;
-    # the UUID is auto-generated per your model default.
-    db_submission = Submission(
-        title=submission.title,
-        intervention_measurement=submission.intervention_measurement,
-        description=submission.description,
-        implementation_status=submission.implementation_status,
-        implementation_organization=submission.implementation_organization,
-        implementation_partners_other=submission.implementation_partners_other,
-        start_date=submission.start_date,
-        end_date=submission.end_date,
-        link=submission.link,
-        funding_organization=submission.funding_organization,
-        funding_type=submission.funding_type,
-        funding_amount=submission.funding_amount,
-        estimated_budget_cost=submission.estimated_budget_cost,
-        geo_location=submission.geo_location,
-        project_manager_name=submission.project_manager_name,
-        project_manager_organization=submission.project_manager_organization,
-        project_manager_position=submission.project_manager_position,
-        project_manager_email=submission.project_manager_email,
-        project_manager_phone=submission.project_manager_phone,
-        project_manager_mobile=submission.project_manager_mobile,
-        submission_status=submission.submission_status,
-        submission_comments=submission.submission_comments,
-        issubmitted=submission.issubmitted,
-        research=submission.research,
-        createdby=submission.createdby,
-        createdate=submission.createdate,
-        updatedate=submission.updatedate,
-        updatedby=submission.updatedby,
-        deletedby=submission.deletedby,
-        deletedate=submission.deletedate,
-        deleted=submission.deleted,
-    )
-    try:
-        db.add(db_submission)
-        db.commit()
-        db.refresh(db_submission)  # Loads the generated UUID and _id values
-        return db_submission
-    except Exception as e:
-        db.rollback()
-        # Log the full traceback for deeper debugging:
-        error_details = traceback.format_exc()
-        print("Error creating submission:", error_details)
-        raise HTTPException(
-            status_code=400,
-            detail=f"Submission creation failed. Error details: {str(e)}"
-        )
-
-
-# Endpoint to get a list of all submissions.
-@router.get("/fetch_all", response_model=List[SubmissionModel])
-def read_submissions(db: Session = Depends(get_db)):
-    submissions = db.query(Submission).all()
-    return submissions
-
-
-# Endpoint to get a single submission by its UUID.
-@router.get("/fetch/{submission_uuid}", response_model=SubmissionModel)
+@router.get("/read_submission/{submission_uuid}",
+            response_model=SubmissionResponse,
+            dependencies=[Depends(Authorize(NCCRDScope.PROJECT_READ))],
+            )
 def read_submission(submission_uuid: UUID, db: Session = Depends(get_db)):
-    submission = db.query(Submission).filter(Submission.id == submission_uuid).first()
-    if submission is None:
-        raise HTTPException(status_code=404, detail="Submission not found")
-    return submission
-
-
-@router.patch("/update/{submission_uuid}")
-def update_submission(
-        submission_uuid: UUID, update_data: SubmissionUpdate, db: Session = Depends(get_db)
-):
+    # 1. Retrieve the submission using the auto-generated UUID.
     submission = db.query(Submission).filter(Submission.id == submission_uuid).first()
     if not submission:
         raise HTTPException(status_code=404, detail="Submission not found")
 
-    update_dict = update_data.dict(exclude_unset=True)
-    for key, value in update_dict.items():
-        setattr(submission, key, value)
+    # 2. Retrieve related records.
+    mitigation = db.query(Mitigation).filter(Mitigation.submission_id == submission.id).first()
+    adaptation = db.query(Adaptaion).filter(Adaptaion.submission_id == submission.id).first()
 
-    db.commit()
-    db.refresh(submission)
+    # 3. Determine based on intervention_measurement which related data to attach.
+    # Normalize the intervention_measurement value.
+    im_value = submission.intervention_measurement.strip().lower() if submission.intervention_measurement else ""
+
+    print("Value:", im_value)
+    if im_value == "cross cutting":
+        # Both records are applicable.
+        submission.mitigation = mitigation
+        submission.adaptation = adaptation
+    elif im_value == "adaptation":
+        # Only adaptation data should be provided.
+        submission.mitigation = None
+        submission.adaptation = adaptation
+    elif im_value == "mitigation":
+        # Only mitigation data should be provided.
+        submission.mitigation = mitigation
+        submission.adaptation = None
+    else:
+        # If intervention_measurement is set to an unexpected value,
+        # default to not adding any nested records.
+        submission.mitigation = None
+        submission.adaptation = None
+
+    # 4. Return the submission with the nested related records.
     return submission
-
-
-@router.delete("/delete/{submission_uuid}")
-def soft_delete_submission(submission_uuid: UUID, db: Session = Depends(get_db)):
-    submission = db.query(Submission).filter(Submission.id == submission_uuid).first()
-    if not submission:
-        raise HTTPException(status_code=404, detail="Submission not found")
-
-    # Instead of deleting the record, mark it as deleted
-    submission.deleted = True
-    submission.deletedate = datetime.utcnow()
-    db.commit()
-    db.refresh(submission)
-    return {"detail": "Submission marked as deleted."}
 
 
 #######New Submission
@@ -174,17 +114,18 @@ def create_submission(submission: SubmissionCreate, db: Session = Depends(get_db
         project_manager_email=submission.project_manager_email,
         project_manager_phone=submission.project_manager_phone,
         project_manager_mobile=submission.project_manager_mobile,
-        submission_status=submission.submission_status,
-        submission_comments=submission.submission_comments,
-        issubmitted=submission.issubmitted,
+        submission_status='Pending',
+        # submission_comments=submission.submission_comments,
+        issubmitted=True,
+        platfrom=submission.platfrom,
         research=submission.research,
-        createdby=submission.createdby,
-        createdate=submission.createdate,
-        updatedate=submission.updatedate,
-        updatedby=submission.updatedby,
-        deletedby=submission.deletedby,
-        deletedate=submission.deletedate,
-        deleted=submission.deleted,
+        createdby='1',
+        createdate=datetime.utcnow(),
+        # updatedate=submission.updatedate,
+        # updatedby=submission.updatedby,
+        # deletedby=submission.deletedby,
+        # deletedate=submission.deletedate,
+        # deleted=submission.deleted,
     )
     db.add(db_submission)
     db.commit()
@@ -372,49 +313,22 @@ def update_submission(
     return submission
 
 
-@router.get("/read_submission/{submission_uuid}",
-            response_model=SubmissionResponse,
-            dependencies=[Depends(Authorize(NCCRDScope.PROJECT_READ))],
-            )
-def read_submission(submission_uuid: UUID, db: Session = Depends(get_db)):
-    # 1. Retrieve the submission using the auto-generated UUID.
+@router.delete("/delete/{submission_uuid}")
+def soft_delete_submission(submission_uuid: UUID, db: Session = Depends(get_db)):
     submission = db.query(Submission).filter(Submission.id == submission_uuid).first()
     if not submission:
         raise HTTPException(status_code=404, detail="Submission not found")
 
-    # 2. Retrieve related records.
-    mitigation = db.query(Mitigation).filter(Mitigation.submission_id == submission.id).first()
-    adaptation = db.query(Adaptaion).filter(Adaptaion.submission_id == submission.id).first()
-
-    # 3. Determine based on intervention_measurement which related data to attach.
-    # Normalize the intervention_measurement value.
-    im_value = submission.intervention_measurement.strip().lower() if submission.intervention_measurement else ""
-
-    print("Value:", im_value)
-    if im_value == "cross cutting":
-        # Both records are applicable.
-        submission.mitigation = mitigation
-        submission.adaptation = adaptation
-    elif im_value == "adaptation":
-        # Only adaptation data should be provided.
-        submission.mitigation = None
-        submission.adaptation = adaptation
-    elif im_value == "mitigation":
-        # Only mitigation data should be provided.
-        submission.mitigation = mitigation
-        submission.adaptation = None
-    else:
-        # If intervention_measurement is set to an unexpected value,
-        # default to not adding any nested records.
-        submission.mitigation = None
-        submission.adaptation = None
-
-    # 4. Return the submission with the nested related records.
-    return submission
+    # Instead of deleting the record, mark it as deleted
+    submission.deleted = True
+    submission.deletedate = datetime.utcnow()
+    db.commit()
+    db.refresh(submission)
+    return {"detail": "Submission marked as deleted."}
 
 
-@router.post("/upload-xlsx/")
-async def upload_xlsm(file: UploadFile = File(...), db: Session = Depends(get_db)):
+@router.post("/create_submission_upload-xlsx/")
+async def create_submission_upload_xlsm(file: UploadFile = File(...), db: Session = Depends(get_db)):
     try:
         contents = await file.read()  # Read file as bytes
         wb = load_workbook(BytesIO(contents), keep_vba=True)  # Load workbook with macros
@@ -481,4 +395,168 @@ async def upload_xlsm(file: UploadFile = File(...), db: Session = Depends(get_db
         return {"Submission Created": data}
 
     except Exception as e:
+        return {"error": str(e)}
+
+
+@router.post("/create_submission_upload-test-xlsx/")
+async def create_submission_upload_test_xlsx(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    try:
+        contents = await file.read()
+        wb = load_workbook(BytesIO(contents), keep_vba=True, read_only=True, data_only=True)
+
+        # === Step 1: General Project Details ===
+        sheet = wb['General project details']
+        submission_data = {}
+        for row in sheet.iter_rows(values_only=True):
+            title = row[0]
+            value = next((v for v in row[1:] if v is not None), None)
+            if value is not None and title:
+                title = str(title).strip()
+                if title == 'Title':
+                    submission_data['title'] = value
+                elif title == 'Indicate the type of measure':
+                    val = value.lower()
+                    if "mitigation" in val:
+                        submission_data['intervention_measurement'] = "Mitigation"
+                    elif "adaptation" in val:
+                        submission_data['intervention_measurement'] = "Adaptation"
+                    elif "cross" in val:
+                        submission_data['intervention_measurement'] = "Cross Cutting"
+                elif title == 'Description':
+                    submission_data['description'] = value
+                elif title == 'Implementation status':
+                    submission_data['implementation_status'] = value
+                elif title == 'Implementing organization':
+                    submission_data['implementation_organization'] = value
+                elif title == 'Other implementing partners':
+                    submission_data['implementation_partners_other'] = value
+                elif title == 'Start year':
+                    submission_data['start_date'] = value
+                elif title == 'End year':
+                    submission_data['end_date'] = value
+                elif title == 'Link to project website':
+                    submission_data['link'] = value
+                elif title == 'Funding organization':
+                    submission_data['funding_organization'] = value
+                elif title == 'Type of funding':
+                    submission_data['funding_type'] = value
+                elif title == 'Actual budget':
+                    submission_data['funding_amount'] = float(value)
+                elif title == 'Estimated budget range':
+                    submission_data['estimated_budget_cost'] = value
+                elif title == 'Name':
+                    submission_data['project_manager_name'] = value
+                elif title == 'Company/organization':
+                    submission_data['project_manager_organization'] = value
+                elif title == 'Position':
+                    submission_data['project_manager_position'] = value
+                elif title == 'Email address':
+                    submission_data['project_manager_email'] = value
+                elif title == 'Mobile number':
+                    submission_data['project_manager_mobile'] = value
+
+        submission_data['geo_location'] = {
+            "type": "Point",
+            "coordinates": [30.374, -27.936]  # Replace with real values if needed
+        }
+
+        im_type = submission_data.get("intervention_measurement", "").lower()
+
+        # === Step 2: Adaptation ===
+        if im_type in ("adaptation", "cross cutting"):
+            adap_sheet = wb["Adaptation details"]
+            adaptation_fields = {}
+            for row in adap_sheet.iter_rows(values_only=True):
+                label = str(row[0]).strip() if row[0] else None
+                value = next((v for v in row[1:] if v is not None), None)
+                if label and value:
+                    if label == "Adaptation sector":
+                        adaptation_fields["sector"] = value
+                    elif label == "National policy":
+                        adaptation_fields["national_policy"] = value
+                    elif label == "Overall adaptation intervention goal":
+                        adaptation_fields["intervention_goal"] = value
+                    elif label == "Provincial / municipal policy / framework":
+                        adaptation_fields["provincial_municipal"] = value
+                    elif label == "Hazard":
+                        adaptation_fields["hazard"] = value
+                    elif label == "Progress calculator / explanation":
+                        adaptation_fields["progress_calculator"] = value
+                    elif label == "Observed and projected climate change impacts":
+                        adaptation_fields["climate_impact"] = value
+                    elif label == "How the intervention addresses the climate impact":
+                        adaptation_fields["address_climate_impact"] = value
+                    elif label == "Adaptation impact response":
+                        adaptation_fields["impact_response"] = value
+
+            if "sector" not in adaptation_fields:
+                raise HTTPException(status_code=400, detail="Adaptation sector is required.")
+            submission_data["adaptation_data"] = AdaptationResponse(**adaptation_fields)
+
+        # === Step 3: Mitigation ===
+        if im_type in ("mitigation", "cross cutting"):
+            mit_sheet = wb["Mitigation details"]
+            mitigation_fields = {}
+            for row in mit_sheet.iter_rows(values_only=True):
+                label = str(row[0]).strip() if row[0] else None
+                value = next((v for v in row[1:] if v is not None), None)
+                if label and value is not None:
+                    if label == "Mitigation sector":
+                        mitigation_fields["sector"] = value
+                    elif label == "Subsector":
+                        mitigation_fields["subsector"] = value
+                    elif label == "Secondary sector":
+                        mitigation_fields["secondary"] = value
+                    elif label == "Project type":
+                        mitigation_fields["project_type"] = value
+                    elif label == "Project subtype":
+                        mitigation_fields["project_subtype"] = value
+                    elif label == "Mitigation programme":
+                        mitigation_fields["mitigation_program"] = value
+                    elif label == "National policy":
+                        mitigation_fields["national_policy"] = value
+                    elif label == "Provincial / municipal policy / framework":
+                        mitigation_fields["provincial_municipal"] = value
+                    elif label == "Primary intended mitigation outcome":
+                        mitigation_fields["primary_intended_outcome"] = value
+                    elif label == "Progress calculator / explanation":
+                        mitigation_fields["progress_calculator"] = value
+                    elif label == "Environmental co-benefit":
+                        mitigation_fields["enviromental_co_benefit"] = value
+                    elif label == "Environmental co-benefit description":
+                        mitigation_fields["enviromental_co_benefit_description"] = value
+                    elif label == "Social co-benefit":
+                        mitigation_fields["social_co_benefit"] = value
+                    elif label == "Social co-benefit description":
+                        mitigation_fields["social_co_benefit_description"] = value
+                    elif label == "Economic co-benefit":
+                        mitigation_fields["economic_co_benefit"] = value
+                    elif label == "Economic co-benefit description":
+                        mitigation_fields["economic_co_benefit_description"] = value
+                    elif label == "Are carbon credits issued?":
+                        mitigation_fields["carbon_credit"] = value in ["Yes", "yes", "TRUE", True]
+                    elif label == "CDM / Voluntary":
+                        mitigation_fields["cdm_voluntary"] = value
+                    elif label == "CDM Executive Board status":
+                        mitigation_fields["cdm_executive_board_status"] = value
+                    elif label == "CDM methodology":
+                        mitigation_fields["cdm_methodology"] = value
+                    elif label == "Organisation issuing carbon credits":
+                        mitigation_fields["organization_issuing_credits"] = value
+                    elif label == "Voluntary methodology":
+                        mitigation_fields["voluntary_methodology"] = value
+                    elif label == "CDM project number":
+                        mitigation_fields["cdm_project_number"] = value
+
+            if "sector" not in mitigation_fields:
+                raise HTTPException(status_code=400, detail="Mitigation sector is required.")
+            submission_data["mitigation_data"] = MitigationResponse(**mitigation_fields)
+
+        # === Step 4: Submit to DB ===
+        submission_create = SubmissionCreate(**submission_data)
+        data = create_submission(submission_create, db)
+        return {"Submission Created": data}
+
+    except Exception as e:
+        traceback.print_exc()
         return {"error": str(e)}

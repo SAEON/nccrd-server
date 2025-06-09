@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from nccrd.api.routers import submission
+from nccrd.api.routers import submission,region
 from nccrd.db import Session
 from nccrd.version import VERSION
 
@@ -13,6 +13,7 @@ app = FastAPI(
 )
 
 app.include_router(submission.router, prefix='/submission', tags=['Submission'])
+app.include_router(region.router, prefix='/region', tags=['Region'])
 
 # app.include_router(survey.router, prefix='/survey', tags=['Survey'])
 # app.include_router(survey_download.router, prefix='/survey/download', tags=['Survey', 'Download'])
@@ -22,6 +23,7 @@ app.include_router(submission.router, prefix='/submission', tags=['Submission'])
 app.add_middleware(
     CORSMiddleware,
     # allow_origins=config.ODP.API.ALLOW_ORIGINS,
+    allow_origins=["http://nccrd.localhost:2021"],  # Add frontend domain here
     allow_methods=["*"],
     allow_headers=["*"],
 )

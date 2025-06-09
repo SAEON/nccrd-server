@@ -21,7 +21,7 @@ class MitigationCreate(BaseModel):
     social_co_benefit_description: Optional[str] = Field(None)
     economic_co_benefit: Optional[str] = Field(None)
     economic_co_benefit_description: Optional[str] = Field(None)
-    carbon_credit: Optional[bool] = Field(None)
+    carbon_credit: Optional[str] = Field(None)
     cdm_voluntary: Optional[str] = Field(None)
     cdm_executive_board_status: Optional[str] = Field(None)
     cdm_methodology: Optional[str] = Field(None)
@@ -48,7 +48,7 @@ class MitigationCreate(BaseModel):
                 "social_co_benefit_description": "Employment opportunities",
                 "economic_co_benefit": "Cost Savings",
                 "economic_co_benefit_description": "Reduced energy bills",
-                "carbon_credit": True,
+                "carbon_credit": "Yes",
                 "cdm_voluntary": "Voluntary credits",
                 "cdm_executive_board_status": "Active",
                 "cdm_methodology": "Methodology XYZ",
@@ -116,18 +116,20 @@ class SubmissionCreate(BaseModel):
     project_manager_phone: Optional[str] = None
     project_manager_mobile: Optional[str] = None
 
-    submission_status: Optional[str] = None
-    submission_comments: Optional[str] = None
-    issubmitted: Optional[bool] = Field(False)
+    # submission_status: Optional[str] = None
+    # submission_comments: Optional[str] = None
+    # issubmitted: Optional[bool] = Field(False)
     research: Optional[str] = None
 
-    createdby: Optional[int] = None
-    createdate: Optional[datetime] = None
-    updatedate: Optional[datetime] = None
-    updatedby: Optional[int] = None
-    deletedby: Optional[int] = None
-    deletedate: Optional[datetime] = None
-    deleted: Optional[bool] = Field(False)
+    # We have commented these as they should be meta_data
+    platfrom: Optional[str] = None
+    # createdby: Optional[int] = None
+    # createdate: Optional[datetime] = None
+    # updatedate: Optional[datetime] = None
+    # updatedby: Optional[int] = None
+    # deletedby: Optional[int] = None
+    # deletedate: Optional[datetime] = None
+    # deleted: Optional[bool] = Field(False)
 
     # Nested records for related interventions.
     mitigation_data: Optional[MitigationCreate] = Field(
@@ -171,6 +173,7 @@ class SubmissionCreate(BaseModel):
                 "submission_comments": "Project accepted",
                 "issubmitted": True,
                 "research": "Preliminary research completed.",
+                "platfrom":"API",
                 "createdby": 35,
                 "createdate": "2021-11-09T19:59:00Z",
                 "updatedate": "2025-04-24T20:00:00Z",
@@ -195,7 +198,7 @@ class SubmissionCreate(BaseModel):
                     "social_co_benefit_description": "Employment opportunities",
                     "economic_co_benefit": "Cost Savings",
                     "economic_co_benefit_description": "Reduced energy bills",
-                    "carbon_credit": True,
+                    "carbon_credit": "Yes",
                     "cdm_voluntary": "Voluntary credits",
                     "cdm_executive_board_status": "Active",
                     "cdm_methodology": "Methodology XYZ",
@@ -284,7 +287,7 @@ class SubmissionUpdate(BaseModel):
                     "social_co_benefit_description": "Employment opportunities",
                     "economic_co_benefit": "Cost Savings",
                     "economic_co_benefit_description": "Reduced energy bills",
-                    "carbon_credit": True,
+                    "carbon_credit": "Yes",
                     "cdm_voluntary": "Voluntary credits",
                     "cdm_executive_board_status": "Active",
                     "cdm_methodology": "Methodology XYZ",
@@ -364,7 +367,7 @@ class MitigationResponse(BaseModel):
     social_co_benefit_description: Optional[str]
     economic_co_benefit: Optional[str]
     economic_co_benefit_description: Optional[str]
-    carbon_credit: Optional[bool]
+    carbon_credit: Optional[str]
     cdm_voluntary: Optional[str]
     cdm_executive_board_status: Optional[str]
     cdm_methodology: Optional[str]

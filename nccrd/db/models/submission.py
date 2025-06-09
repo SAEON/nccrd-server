@@ -48,6 +48,7 @@ class Submission(Base):
     research = Column(String)
 
     # Metadata
+    platfrom = Column(String)
     createdby = Column(Integer)
     createdate = Column(DateTime)
     updatedate = Column(DateTime)
@@ -115,7 +116,7 @@ class Mitigation(Base):
     economic_co_benefit_description = Column(String)
 
     # Carbon credit information
-    carbon_credit= Column(Boolean)
+    carbon_credit= Column(String)
     cdm_voluntary = Column(String)
     cdm_executive_board_status = Column(String)
     cdm_methodology = Column(String)
