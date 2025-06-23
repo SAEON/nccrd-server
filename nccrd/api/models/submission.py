@@ -162,7 +162,7 @@ class SubmissionCreate(BaseModel):
                 "funding_type": "NONE",
                 "funding_amount": 537841.67,
                 "estimated_budget_cost": "NONE",
-                "geo_location": {"type": "Point", "coordinates": [30.374, -27.936]},
+                "geo_location": {"country": "ZAF", "province": "GT", "district": "DC48", "local_municipality": "GT484", "type": "Point", "coordinates": [30.374, -27.9363]},
                 "project_manager_name": "Gladys Nyundu",
                 "project_manager_organization": "N/A",
                 "project_manager_position": "N/A",
