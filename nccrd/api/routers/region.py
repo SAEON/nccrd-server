@@ -89,3 +89,20 @@ async def list_countries(db: Session = Depends(get_db)):
     """
     countries = db.query(Country).order_by(Country.shape0).all()
     return JSONResponse(content=[{"id": c.gid, "code": c.shapeiso, "name": c.shape0} for c in countries])
+
+@router.get(
+    "/names/regions",
+    response_model=List[NamedItemModel],
+    summary="List all regions"
+)
+async def list_regions(db: Session = Depends(get_db)):
+    """
+    Return all region names.
+    
+    Example:
+      GET /names/regions
+    """
+    regions = [{'id': 1, 'code': 'ZAF', 'name': 'National'},
+               {'id': 2, 'code': 'ZAF_P', 'name': 'Provincial'}]
+    # regions = db.query(Country).order_by(Country.shape0).all()
+    return JSONResponse(content=[{"id": r['id'], "code": r['code'], "name": r['name']} for r in regions])
