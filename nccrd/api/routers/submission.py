@@ -1,7 +1,7 @@
 from typing import List, Optional, Union
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
-from sqlalchemy import inspect
+from sqlalchemy import cast, String
 from nccrd.api.models import SubmissionModel, SubmissionCreate, SubmissionUpdate, SubmissionResponse, \
     MitigationResponse, AdaptationResponse
 from uuid import UUID
@@ -26,25 +26,117 @@ router = APIRouter()
 )
 async def get_submissions_list(
         submission_id: Optional[str] = None,
+        implementation_status: Optional[str] = None,
+        implementation_organization: Optional[str] = None,
+        funding_organization: Optional[str] = None,
+        funding_type: Optional[str] = None,
+        submission_status: Optional[str] = None,
+        research: Optional[str] = None,
+        adaptation_sector: Optional[str] = None,
+        adaptation_national_policy: Optional[str] = None,
+        adaptation_hazard: Optional[str] = None,
+        adaptation_climate_impact: Optional[str] = None,
+        mitigation_sector: Optional[str] = None,
+        mitigation_subsector: Optional[str] = None,
+        mitigation_project_type: Optional[str] = None,
+        mitigation_program: Optional[str] = None,
+        mitigation_national_policy: Optional[str] = None,
+        mitigation_primary_intended_outcome: Optional[str] = None,
+        mitigation_enviromental_co_benefit: Optional[str] = None,
+        mitigation_social_co_benefit: Optional[str] = None,
+        mitigation_economic_co_benefit: Optional[str] = None,
+        mitigation_carbon_credit: Optional[str] = None,
+        province: Optional[str] = None,
+        q: Optional[str] = None,  # New search parameter
         db: Session = Depends(get_db)
 ):
     """
-    Return all submissions. Optionally, if a `submission_id` query parameter is provided,
-    filter the results to that specific submission.
-
-    Example:
-      GET /all_submissions?submission_id=123
+    Return all submissions, optionally filtered by submission_id or any facet field.
     """
+    query = db.query(Submission)
+
     if submission_id:
-        # Assuming submission_id corresponds to the string field, or you may need to cast if it's not a string.
-        submission = db.query(Submission).filter(Submission.id == submission_id).first()
-        if not submission:
-            raise HTTPException(status_code=404, detail="Submission not found")
-        return [submission]
-    else:
-        submissions = db.query(Submission).all()
-        print(submissions)
-        return submissions
+        query = query.filter(Submission.id == submission_id)
+    if implementation_status:
+        query = query.filter(Submission.implementation_status == implementation_status)
+    if implementation_organization:
+        query = query.filter(Submission.implementation_organization == implementation_organization)
+    if funding_organization:
+        query = query.filter(Submission.funding_organization == funding_organization)
+    if funding_type:
+        query = query.filter(Submission.funding_type == funding_type)
+    if submission_status:
+        query = query.filter(Submission.submission_status == submission_status)
+    if research:
+        query = query.filter(Submission.research == research)
+    if province:
+        # query = query.filter(cast(Submission.geo_location["province"], String) == province)
+        # query = query.filter(
+        #                     Submission.geo_location.has_key("province"),
+        #                     cast(Submission.geo_location["province"], String) != province
+        #         )
+        query = query.filter(
+                            Submission.geo_location.has_key("province"),
+                            Submission.geo_location["province"].astext == province
+                        )
+
+
+    results = db.query(Submission.geo_location).all()
+    for row in results:
+        print(row)
+
+    print("Query:", query)
+    print("......province:.....", province,len( query.all()))
+    
+    # Adaptation facet filters (join if any adaptation filter is present)
+    adaptation_filters = [adaptation_sector, adaptation_national_policy, adaptation_hazard, adaptation_climate_impact]
+    if any(adaptation_filters):
+        query = query.join(Adaptaion, Adaptaion.submission_id == Submission.id)
+        if adaptation_sector:
+            query = query.filter(Adaptaion.sector == adaptation_sector)
+        if adaptation_national_policy:
+            query = query.filter(Adaptaion.national_policy == adaptation_national_policy)
+        if adaptation_hazard:
+            query = query.filter(Adaptaion.hazard == adaptation_hazard)
+        if adaptation_climate_impact:
+            query = query.filter(Adaptaion.climate_impact == adaptation_climate_impact)
+
+    # Mitigation facet filters (join if any mitigation filter is present)
+    mitigation_filters = [mitigation_sector, mitigation_subsector, mitigation_project_type, mitigation_program,
+                         mitigation_national_policy, mitigation_primary_intended_outcome,
+                         mitigation_enviromental_co_benefit, mitigation_social_co_benefit,
+                         mitigation_economic_co_benefit, mitigation_carbon_credit]
+    if any(mitigation_filters):
+        query = query.join(Mitigation, Mitigation.submission_id == Submission.id)
+        if mitigation_sector:
+            query = query.filter(Mitigation.sector == mitigation_sector)
+        if mitigation_subsector:
+            query = query.filter(Mitigation.subsector == mitigation_subsector)
+        if mitigation_project_type:
+            query = query.filter(Mitigation.project_type == mitigation_project_type)
+        if mitigation_program:
+            query = query.filter(Mitigation.mitigation_program == mitigation_program)
+        if mitigation_national_policy:
+            query = query.filter(Mitigation.national_policy == mitigation_national_policy)
+        if mitigation_primary_intended_outcome:
+            query = query.filter(Mitigation.primary_intended_outcome == mitigation_primary_intended_outcome)
+        if mitigation_enviromental_co_benefit:
+            query = query.filter(Mitigation.enviromental_co_benefit == mitigation_enviromental_co_benefit)
+        if mitigation_social_co_benefit:
+            query = query.filter(Mitigation.social_co_benefit == mitigation_social_co_benefit)
+        if mitigation_economic_co_benefit:
+            query = query.filter(Mitigation.economic_co_benefit == mitigation_economic_co_benefit)
+        if mitigation_carbon_credit:
+            query = query.filter(Mitigation.carbon_credit == mitigation_carbon_credit)
+
+    # New search functionality
+    if q:
+        query = query.filter(Submission.title.ilike(f"%{q}%"))
+
+    submissions = query.all()
+    
+    print("Submissions found:", query.all() ,len(submissions))
+    return submissions
 
 
 @router.get("/read_submission/{submission_uuid}",
@@ -560,3 +652,40 @@ async def create_submission_upload_test_xlsx(file: UploadFile = File(...), db: S
     except Exception as e:
         traceback.print_exc()
         return {"error": str(e)}
+
+
+@router.get('/facets/submission', summary='Get all facet values for submissions')
+def get_submission_facets(db: Session = Depends(get_db)):
+    """
+    Returns all distinct values for each facet field from Submission, Adaptaion, and Mitigation models.
+    """
+    print('mitigation_carbon_credit', [row[0] for row in db.query(Mitigation.carbon_credit).distinct()])
+    return {
+        'implementation_status': [row[0] for row in db.query(Submission.implementation_status).distinct()],
+        'implementation_organization': [row[0] for row in db.query(Submission.implementation_organization).distinct()],
+        'funding_organization': [row[0] for row in db.query(Submission.funding_organization).distinct()],
+        'funding_type': [row[0] for row in db.query(Submission.funding_type).distinct()],
+        'submission_status': [row[0] for row in db.query(Submission.submission_status).distinct()],
+        'research': [row[0] for row in db.query(Submission.research).distinct()],
+        'adaptation_sector': [row[0] for row in db.query(Adaptaion.sector).distinct()],
+        'adaptation_national_policy': [row[0] for row in db.query(Adaptaion.national_policy).distinct()],
+        'adaptation_hazard': [row[0] for row in db.query(Adaptaion.hazard).distinct()],
+        'adaptation_climate_impact': [row[0] for row in db.query(Adaptaion.climate_impact).distinct()],
+        'mitigation_sector': [row[0] for row in db.query(Mitigation.sector).distinct()],
+        'mitigation_subsector': [row[0] for row in db.query(Mitigation.subsector).distinct()],
+        'mitigation_project_type': [row[0] for row in db.query(Mitigation.project_type).distinct()],
+        'mitigation_program': [row[0] for row in db.query(Mitigation.mitigation_program).distinct()],
+        'mitigation_national_policy': [row[0] for row in db.query(Mitigation.national_policy).distinct()],
+        'mitigation_primary_intended_outcome': [row[0] for row in db.query(Mitigation.primary_intended_outcome).distinct()],
+        'mitigation_enviromental_co_benefit': [row[0] for row in db.query(Mitigation.enviromental_co_benefit).distinct()],
+        'mitigation_social_co_benefit': [row[0] for row in db.query(Mitigation.social_co_benefit).distinct()],
+        'mitigation_economic_co_benefit': [row[0] for row in db.query(Mitigation.economic_co_benefit).distinct()],
+        'mitigation_carbon_credit': [row[0] for row in db.query(Mitigation.carbon_credit).distinct()],
+        'province':['GT', 'EC']
+        # 'geo_location': [
+        #     row[0]
+        #     for row in db.query(Submission.geo_location)
+        #     .filter(cast(Submission.geo_location["province"], String) == "GT")
+        #     .distinct()
+        # ]
+    }
