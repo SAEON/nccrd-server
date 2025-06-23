@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, JSON,DateTime,Float,Boolean,ForeignKey
+from sqlalchemy import Column, Integer, String,DateTime,Float,Boolean,ForeignKey
+from sqlalchemy.dialects.postgresql import JSONB
 from nccrd.db import Base
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
@@ -29,7 +30,7 @@ class Submission(Base):
     estimated_budget_cost = Column(String)
 
     # Geographic location(s)
-    geo_location = Column(JSON)
+    geo_location = Column(JSONB)
 
     # Project Manager
     project_manager_name = Column(String)
