@@ -15,3 +15,5 @@ faker
 
 # deployment
 uvicorn
+openpyxl
+python-multipart
