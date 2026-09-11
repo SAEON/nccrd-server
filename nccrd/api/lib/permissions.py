@@ -4,7 +4,6 @@ from starlette.status import HTTP_403_FORBIDDEN
 
 from nccrd.api.lib.auth import Authorize, Authorized
 from nccrd.api.lib.tenant import get_current_tenant
-from nccrd.const import NCCRDScope
 from nccrd.db import get_db
 from nccrd.db.models.rbac import Permission, PermissionXrefRole, Tenant, UserXrefRoleXrefTenant
 
@@ -39,7 +38,7 @@ class RequirePermission:
 
     async def __call__(
             self,
-            auth: Authorized = Depends(Authorize(NCCRDScope.PROJECT_ADMIN)),
+            auth: Authorized = Depends(Authorize()),
             tenant: Tenant = Depends(get_current_tenant),
             db: Session = Depends(get_db),
     ) -> Authorized:

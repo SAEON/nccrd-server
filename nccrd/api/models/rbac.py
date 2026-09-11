@@ -17,19 +17,27 @@ from pydantic import BaseModel, Field
 
 
 class UserCreate(BaseModel):
-    """Input schema for provisioning a user (e.g. on first Hydra login)."""
+    """Input schema for an admin provisioning a new user. A random temporary
+    password is generated server-side and returned once in the response —
+    it is not retrievable afterwards. The new user must change it on their
+    first login.
+
+    ``role_id`` and ``tenant_id`` are optional and must be given together —
+    when present, the new user is granted that role on that tenant in the
+    same request, instead of a separate ``POST /users/{id}/roles`` call."""
 
     name: str = Field(..., description="Display name for the user.")
     email: str = Field(..., description="Unique email address.")
-    saeon_id: Optional[str] = Field(None, description="SAEON identity provider subject, if applicable.")
-    id_token: Optional[str] = Field(None, description="Raw identity token, if retained.")
+    role_id: Optional[int] = Field(None, description="nccrd.role.id to grant immediately. Requires tenant_id.")
+    tenant_id: Optional[int] = Field(None, description="nccrd.tenant.id the role applies to. Requires role_id.")
 
     class Config:
         schema_extra = {
             "example": {
                 "name": "Jane Smith",
                 "email": "jane.smith@example.org",
-                "saeon_id": "auth0|abc123",
+                "role_id": 8,
+                "tenant_id": 6,
             }
         }
 
@@ -45,6 +53,16 @@ class UserResponse(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+class UserCreateResponse(BaseModel):
+    """Response for POST /rbac/users — the new user plus their one-time
+    temporary password, to be relayed to them out-of-band. ``role_assignment``
+    is set only if ``role_id``/``tenant_id`` were given in the request."""
+
+    user: UserResponse
+    temp_password: str = Field(..., description="One-time temporary password. Not retrievable after this response.")
+    role_assignment: Optional["UserRoleTenantResponse"] = None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -117,3 +135,6 @@ class CurrentUserResponse(BaseModel):
     tenant: TenantResponse
     roles: List[str]
     permissions: List[str]
+
+
+UserCreateResponse.update_forward_refs()

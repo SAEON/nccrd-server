@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from nccrd.api.routers import submission, region, rbac, vocabulary
+from nccrd.api.routers import auth, submission, region, rbac, vocabulary
 from nccrd.api.routers.submission import PROGRESS_REPORT_UPLOAD_DIR
 from nccrd.version import VERSION
 
@@ -13,6 +13,7 @@ app = FastAPI(
     redoc_url='/docs',
 )
 
+app.include_router(auth.router, prefix='/auth', tags=['Auth'])
 app.include_router(submission.router, prefix='/submission', tags=['Submission'])
 app.include_router(region.router, prefix='/region', tags=['Region'])
 app.include_router(rbac.router, prefix='/rbac', tags=['RBAC'])

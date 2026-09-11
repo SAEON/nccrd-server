@@ -1,4 +1,4 @@
-from random import randint, choice
+from datetime import datetime, timezone
 import uuid
 
 import factory
@@ -7,6 +7,7 @@ from faker import Faker
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 import nccrd.db
+import nccrd.db.models
 
 FactorySession = scoped_session(sessionmaker(
     bind=nccrd.db.engine,
@@ -23,25 +24,25 @@ class NCCRDModelFactory(SQLAlchemyModelFactory):
         sqlalchemy_session = FactorySession
         sqlalchemy_session_persistence = 'commit'
 
+
 class SubmissionFactory(NCCRDModelFactory):
     class Meta:
         model = nccrd.db.models.Submission
 
-    id = factory.Sequence(lambda n: n + 1)
-    name = factory.Faker('name')
+    title = factory.Faker('sentence', nb_words=6)
+    intervention_measurement = factory.Iterator(['Mitigation', 'Adaptation', 'Cross Cutting'])
     description = factory.Faker('text')
-    status = factory.Iterator(['pending', 'completed', 'failed'])
-    created_at = factory.Faker('date_time_this_year')
-    updated_at = factory.Faker('date_time_this_year')
-    user_id = factory.Sequence(lambda n: n + 1)  # Assuming user_id is an integer
-    # Add any additional fields or methods here if needed
+    implementation_status = factory.Iterator(['Planned', 'Under Implementation', 'Completed'])
+    createdate = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+    issubmitted = False
+    deleted = False
+
 
 class MitigationFactory(NCCRDModelFactory):
     class Meta:
         model = nccrd.db.models.Mitigation
 
-    id = factory.Sequence(lambda n: n + 1)
-    submission_id = factory.LazyAttribute(lambda _: str(uuid.uuid4()))
+    submission_id = factory.LazyFunction(uuid.uuid4)
     sector = factory.Faker('word')
     subsector = factory.Faker('word')
     secondary = factory.Faker('word')
@@ -52,8 +53,8 @@ class MitigationFactory(NCCRDModelFactory):
     provincial_municipal = factory.Faker('word')
     primary_intended_outcome = factory.Faker('word')
     progress_calculator = factory.Faker('word')
-    enviromental_co_benefit = factory.Faker('word')
-    enviromental_co_benefit_description = factory.Faker('sentence')
+    environmental_co_benefit = factory.Faker('word')
+    environmental_co_benefit_description = factory.Faker('sentence')
     social_co_benefit = factory.Faker('word')
     social_co_benefit_description = factory.Faker('sentence')
     economic_co_benefit = factory.Faker('word')
@@ -66,12 +67,12 @@ class MitigationFactory(NCCRDModelFactory):
     voluntary_methodology = factory.Faker('word')
     cdm_project_number = factory.Faker('bothify', text='CDM#####')
 
-class AdaptaionFactory(NCCRDModelFactory):
-    class Meta:
-        model = nccrd.db.models.Adaptaion
 
-    id = factory.Sequence(lambda n: n + 1)
-    submission_id = factory.LazyAttribute(lambda _: str(uuid.uuid4()))
+class AdaptationFactory(NCCRDModelFactory):
+    class Meta:
+        model = nccrd.db.models.Adaptation
+
+    submission_id = factory.LazyFunction(uuid.uuid4)
     sector = factory.Faker('word')
     national_policy = factory.Faker('word')
     intervention_goal = factory.Faker('sentence')

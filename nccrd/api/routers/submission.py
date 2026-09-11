@@ -11,7 +11,7 @@ Changelog vs. previous version
   the slower ``.astext ==`` cast approach.
 * ``new_submission``, ``update_new_submission``, ``delete``, and the bulk-upload
   endpoint are protected by ``Depends(RequirePermission(...))``, which checks
-  a Hydra scope (``Authorize``) and an RBAC permission for the current tenant.
+  authentication (``Authorize``) and an RBAC permission for the current tenant.
 * List/read endpoints and all write endpoints are scoped to the tenant
   resolved from the request's Host header (see ``nccrd.api.lib.tenant``);
   writes also link the new submission to that tenant.
@@ -477,7 +477,7 @@ def read_submission(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# WRITE endpoints (require PROJECT_ADMIN scope + an RBAC permission)
+# WRITE endpoints (require authentication + an RBAC permission)
 # ──────────────────────────────────────────────────────────────────────────────
 
 

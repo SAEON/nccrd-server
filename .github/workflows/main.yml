@@ -12,13 +12,6 @@ jobs:
         with:
           path: nccrd-server
 
-      - name: Check out odp-core
-        uses: actions/checkout@v4
-        with:
-          repository: SAEON/odp-core
-          path: odp-core
-          ref: nccrd
-
       - name: Set up Python
         uses: actions/setup-python@v4
         with:

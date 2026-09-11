@@ -12,11 +12,9 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 
-# ── Ensure both package roots are on sys.path ────────────────────────────────
+# ── Ensure the package root is on sys.path ───────────────────────────────────
 _server_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_odp_core_root = os.path.abspath(os.path.join(_server_root, "..", "odp-core"))
 sys.path.insert(0, _server_root)
-sys.path.insert(0, _odp_core_root)
 
 # ── Import project config and models ─────────────────────────────────────────
 from nccrd.config import nccrd_config   # noqa: E402

@@ -11,7 +11,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from nccrd.api.lib.auth import Authorize, Authorized
+from nccrd.api.lib.auth import Authorize, Authorized, generate_temp_password, hash_password
 from nccrd.api.lib.permissions import RequirePermission
 from nccrd.api.lib.tenant import get_current_tenant
 from nccrd.api.models import (
@@ -20,10 +20,11 @@ from nccrd.api.models import (
     RoleAssignmentCreate,
     RoleResponse,
     TenantResponse,
+    UserCreate,
+    UserCreateResponse,
     UserResponse,
     UserRoleTenantResponse,
 )
-from nccrd.const import NCCRDScope
 from nccrd.db import get_db
 from nccrd.db.models.rbac import (
     Permission,
@@ -44,7 +45,7 @@ router = APIRouter()
 )
 def get_current_user(
         db: Session = Depends(get_db),
-        auth: Authorized = Depends(Authorize(NCCRDScope.PROJECT_ADMIN)),
+        auth: Authorized = Depends(Authorize()),
         tenant: Tenant = Depends(get_current_tenant),
 ) -> CurrentUserResponse:
     user = db.query(User).filter(User.id == auth.internal_user_id).first()
@@ -90,6 +91,59 @@ def list_users(
         auth: Authorized = Depends(RequirePermission("view-users")),
 ) -> List[User]:
     return db.query(User).filter(User.deleted.isnot(True)).all()
+
+
+@router.post(
+    "/users",
+    response_model=UserCreateResponse,
+    summary="Provision a new user with a one-time temporary password, optionally granting a role on a "
+            "tenant in the same call. Gated behind `assign-role` since creating accounts is an admin-tier action.",
+)
+def create_user(
+        body: UserCreate,
+        db: Session = Depends(get_db),
+        auth: Authorized = Depends(RequirePermission("assign-role")),
+) -> UserCreateResponse:
+    if db.query(User).filter(User.email == body.email).first():
+        raise HTTPException(status_code=409, detail="A user with this email already exists.")
+
+    if (body.role_id is None) != (body.tenant_id is None):
+        raise HTTPException(status_code=422, detail="role_id and tenant_id must be given together.")
+
+    role, tenant = None, None
+    if body.role_id is not None:
+        role = db.query(Role).filter(Role.id == body.role_id).first()
+        if not role:
+            raise HTTPException(status_code=404, detail="Role not found.")
+        tenant = db.query(Tenant).filter(Tenant.id == body.tenant_id).first()
+        if not tenant:
+            raise HTTPException(status_code=404, detail="Tenant not found.")
+
+    temp_password = generate_temp_password()
+    user = User(
+        name=body.name,
+        email=body.email,
+        password_hash=hash_password(temp_password),
+        password_set_at=None,  # must change on first login
+    )
+    db.add(user)
+    db.flush()  # assign user.id without committing, so the role link below is part of the same transaction
+
+    link = None
+    if role is not None:
+        link = UserXrefRoleXrefTenant(user_id=user.id, role_id=role.id, tenant_id=tenant.id)
+        db.add(link)
+
+    db.commit()
+    db.refresh(user)
+    if link is not None:
+        db.refresh(link)
+
+    return UserCreateResponse(
+        user=UserResponse.from_orm(user),
+        temp_password=temp_password,
+        role_assignment=UserRoleTenantResponse.from_orm(link) if link is not None else None,
+    )
 
 
 @router.get(

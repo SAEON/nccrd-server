@@ -1,10 +1,11 @@
--e file:../odp-core
-
 sqlalchemy
 psycopg2
 fastapi
 starlette
+pydantic<2  # nccrd/config.py and nccrd/api/models/*.py use Pydantic v1 syntax (BaseSettings, orm_mode, .from_orm()) — do not let this drift to v2 via a bare pip-compile --upgrade.
 alembic
+pyjwt
+passlib[bcrypt]
 
 # testing
 pytest
@@ -12,6 +13,7 @@ coverage
 sqlalchemy_utils
 factory-boy
 faker
+httpx
 
 # deployment
 uvicorn

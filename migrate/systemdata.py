@@ -4,7 +4,7 @@ import pathlib
 from dotenv import load_dotenv
 from sqlalchemy import text, event, DDL
 from sqlalchemy.exc import ProgrammingError
-from nccrd.db.models import Adaptaion,Mitigation,Submission, Trees, Vocabulary, VocabularyXrefVocabulary, VocabularyXrefTree
+from nccrd.db.models import Adaptation, Mitigation, Submission, Trees, Vocabulary, VocabularyXrefVocabulary, VocabularyXrefTree
 
 from nccrd.db import Base, engine
 
@@ -57,12 +57,10 @@ def create_static_system_data(target, connection, **kw):
     """Create static system data."""
     logger.info('Creating static system data...')
 
-    import pandas as pd
-    import geopandas as gpd
     # Submission.create_default_submissions()
 
     # # Create default adaptation and mitigation entries
-    # Adaptaion.create_default_adaptations()
+    # Adaptation.create_default_adaptations()
     # Mitigation.create_default_mitigations()
 
     logger.info('Static system data created.')

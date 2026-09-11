@@ -30,6 +30,8 @@ class User(Base):
     email = Column(String(500), unique=True, nullable=False)
     saeon_id = Column(String(255))
     id_token = Column(Text)
+    password_hash = Column(String(255))
+    password_set_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     deleted = Column(Boolean, default=False, nullable=False)
 
