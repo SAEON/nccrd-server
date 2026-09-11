@@ -9,7 +9,7 @@ import os
 import sys
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 from alembic import context
 
 # ── Ensure the package root is on sys.path ───────────────────────────────────
@@ -58,6 +58,12 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        # A genuinely fresh database has no `nccrd` schema at all yet — every
+        # migration (and the alembic_version table itself) lives inside it,
+        # so this has to exist before `context.run_migrations()` runs, not
+        # just before individual migrations that happen to create tables.
+        connection.execute(text("CREATE SCHEMA IF NOT EXISTS nccrd"))
+        connection.commit()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

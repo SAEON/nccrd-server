@@ -4,9 +4,13 @@ import pathlib
 from dotenv import load_dotenv
 from sqlalchemy import text, event, DDL
 from sqlalchemy.exc import ProgrammingError
+from alembic import command
+from alembic.config import Config
 from nccrd.db.models import Adaptation, Mitigation, Submission, Trees, Vocabulary, VocabularyXrefVocabulary, VocabularyXrefTree
 
 from nccrd.db import Base, engine
+
+_SERVER_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +43,17 @@ def init_database_schema():
 
         if not schema_exists:
             Base.metadata.create_all(engine)
-            # command.stamp(alembic_cfg, 'head')
-            logger.info('Created the database schema.')
+            # Tables were just created directly from the current ORM models,
+            # bypassing the migration chain entirely (alembic's own migration
+            # 0001 assumes pre-existing legacy-migrated tables and can't run
+            # against an empty database). Stamp alembic_version at head so a
+            # later `alembic upgrade head` correctly sees this DB as current
+            # instead of trying to replay migrations against tables that
+            # already exist.
+            alembic_cfg = Config(str(_SERVER_ROOT / 'alembic.ini'))
+            alembic_cfg.set_main_option('script_location', str(_SERVER_ROOT / 'alembic'))
+            command.stamp(alembic_cfg, 'head')
+            logger.info('Created the database schema and stamped alembic_version at head.')
         
         create_static_system_data(Base.metadata, engine.connect())
         # This will trigger the creation of static system data
