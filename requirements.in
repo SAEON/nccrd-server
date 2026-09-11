@@ -6,6 +6,7 @@ pydantic<2  # nccrd/config.py and nccrd/api/models/*.py use Pydantic v1 syntax (
 alembic
 pyjwt
 passlib[bcrypt]
+python-dotenv  # migrate/systemdata.py imports this directly
 
 # testing
 pytest
