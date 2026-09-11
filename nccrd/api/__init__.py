@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 
 from nccrd.api.routers import auth, submission, region, rbac, vocabulary
 from nccrd.api.routers.submission import PROGRESS_REPORT_UPLOAD_DIR
+from nccrd.config import nccrd_config
 from nccrd.version import VERSION
 
 app = FastAPI(
@@ -33,17 +34,7 @@ app.mount(
 
 app.add_middleware(
     CORSMiddleware,
-    # allow_origins=config.ODP.API.ALLOW_ORIGINS,
-    allow_origins=[
-        "http://nccrd.localhost:2021",
-        "http://localhost:5024",
-        "http://127.0.0.1:5024",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-        "http://localhost:5175"
-    ],  # Add frontend domain here
+    allow_origins=[o.strip() for o in nccrd_config.NCCRD.CORS_ORIGINS.split(',') if o.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
 )

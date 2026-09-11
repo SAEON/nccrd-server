@@ -69,6 +69,17 @@ class NCCRDInnerConfig(BaseConfig):
     JWT_SECRET: str
     JWT_ALGORITHM: str = 'HS256'
     JWT_EXPIRES_MINUTES: int = 480
+    # Comma-separated list of allowed frontend origins for CORS, e.g.
+    # "http://192.168.1.50:5024,https://nccrd.saeon.ac.za". Deliberately a
+    # plain string (not a pydantic List field) — env vars are simplest to
+    # write as comma-separated text, split in nccrd/api/__init__.py.
+    CORS_ORIGINS: str = (
+        'http://nccrd.localhost:2021,'
+        'http://localhost:5024,http://127.0.0.1:5024,'
+        'http://localhost:5173,http://127.0.0.1:5173,'
+        'http://localhost:5174,http://127.0.0.1:5174,'
+        'http://localhost:5175'
+    )
 
     _subconfig = {
         'DB': NCCRDDBConfig,
