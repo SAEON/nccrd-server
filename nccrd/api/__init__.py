@@ -14,6 +14,13 @@ app = FastAPI(
     redoc_url='/docs',
 )
 
+@app.get('/health', tags=['Health'])
+def health():
+    """Liveness check for the container's HEALTHCHECK — no auth, no DB
+    round-trip, just confirms the ASGI app itself is up and serving."""
+    return {"status": "ok", "version": VERSION}
+
+
 app.include_router(auth.router, prefix='/auth', tags=['Auth'])
 app.include_router(submission.router, prefix='/submission', tags=['Submission'])
 app.include_router(region.router, prefix='/region', tags=['Region'])
