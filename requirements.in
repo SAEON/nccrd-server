@@ -1,10 +1,10 @@
 sqlalchemy
 psycopg2
-fastapi
-starlette
+fastapi==0.125.0  # highest version that still allows pydantic<2 (0.126.0 requires pydantic>=2.7) — see pydantic pin below.
+starlette==0.50.0  # highest version fastapi==0.125.0's own pin (starlette<0.51.0,>=0.40.0) allows; fixes the applicable published CVEs (multipart-upload event-loop blocking, quadratic-time Range-header parsing) that affect this app's unauthenticated file-download route. A few starlette CVEs remain unfixed here because their fix requires starlette>=1.0, which requires fastapi>=0.126 / pydantic>=2 — see DEPENDENCY_AUDIT.md.
 pydantic<2  # nccrd/config.py and nccrd/api/models/*.py use Pydantic v1 syntax (BaseSettings, orm_mode, .from_orm()) — do not let this drift to v2 via a bare pip-compile --upgrade.
 alembic
-pyjwt
+pyjwt>=2.13.0  # patches several published CVEs; none were exploitable via how this app calls the library (plain jwt.encode/decode with an explicit algorithms=[...] allow-list, no PyJWKClient/JWK usage) but the upgrade is free and closes the latent risk — see DEPENDENCY_AUDIT.md.
 passlib[bcrypt]
 python-dotenv  # migrate/systemdata.py imports this directly
 
