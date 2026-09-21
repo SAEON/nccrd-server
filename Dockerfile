@@ -50,4 +50,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 
 USER app
 
-CMD ["uvicorn", "nccrd.api:app", "--host", "0.0.0.0", "--port", "2022", "--workers", "4"]
+CMD ["uvicorn", "nccrd.api:app", "--host", "0.0.0.0", "--port", "2022", "--workers", "4", "--log-config", "logging.json"]

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "json": {
+      "()": "nccrd.logging_config.JSONFormatter"
+    }
+  },
+  "handlers": {
+    "default": {
+      "class": "logging.StreamHandler",
+      "formatter": "json",
+      "stream": "ext://sys.stdout"
+    },
+    "access": {
+      "class": "logging.StreamHandler",
+      "formatter": "json",
+      "stream": "ext://sys.stdout"
+    }
+  },
+  "loggers": {
+    "uvicorn": {
+      "handlers": ["default"],
+      "level": "INFO"
+    },
+    "uvicorn.error": {
+      "level": "INFO"
+    },
+    "uvicorn.access": {
+      "handlers": ["access"],
+      "level": "INFO",
+      "propagate": false
+    }
+  }
+}
