@@ -34,6 +34,28 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+# Tables/indexes created via raw DDL in migration 0001 (see its docstring)
+# that have no corresponding SQLAlchemy ORM model. Without this filter,
+# autogenerate/`alembic check` always sees them as "extra" objects to drop,
+# drowning out genuine future drift. Excluded here rather than fixed by
+# adding models, since that's a larger change than this filter's job.
+_UNMAPPED_TABLES = {"download_log", "vocabulary_xref_region", "login", "research"}
+_UNMAPPED_INDEXES = {
+    "idx_download_log_user_id", "idx_login_user_id",
+    "idx_adaptation_submission_id", "idx_mitigation_submission_id",
+    "idx_progress_report_submission_id", "idx_submission_createdate",
+    "idx_submission_createdby", "idx_submission_deleted",
+    "idx_submission_geo_location", "idx_submission_issubmitted",
+}
+
+
+def include_object(object, name, type_, reflected, compare_to):
+    if type_ == "table" and name in _UNMAPPED_TABLES:
+        return False
+    if type_ == "index" and name in _UNMAPPED_INDEXES:
+        return False
+    return True
+
 
 def run_migrations_offline() -> None:
     """Emit SQL to stdout without a live connection (offline mode)."""
@@ -44,6 +66,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         include_schemas=True,
+        include_object=include_object,
         version_table_schema="nccrd",
     )
     with context.begin_transaction():
@@ -68,6 +91,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             include_schemas=True,
+            include_object=include_object,
             version_table_schema="nccrd",  # Store alembic_version table inside nccrd schema.
         )
         with context.begin_transaction():
