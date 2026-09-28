@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String,DateTime,Float,Boolean,ForeignKey
+from sqlalchemy import Column, Integer, String,DateTime,Float,Boolean,ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from nccrd.db import Base
 from sqlalchemy.dialects.postgresql import UUID
@@ -18,7 +18,10 @@ class Vocabulary(Base):
 
 class Trees(Base):
     __tablename__ = "tree"
-    __table_args__ = {"schema": "nccrd"}
+    __table_args__ = (
+        UniqueConstraint("name", name="tree_name_key"),
+        {"schema": "nccrd"},
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
 
     name = Column(String)
@@ -27,7 +30,10 @@ class Trees(Base):
 
 class VocabularyXrefTree(Base):
     __tablename__ = "vocabulary_xref_tree"
-    __table_args__ = {"schema": "nccrd"}
+    __table_args__ = (
+        UniqueConstraint("vocabulary_id", "tree_id", name="vocabulary_xref_tree_vocabulary_id_tree_id_key"),
+        {"schema": "nccrd"},
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
 
     vocabulary_id = Column(Integer, ForeignKey("nccrd.vocabulary.id"))
@@ -35,7 +41,10 @@ class VocabularyXrefTree(Base):
 
 class VocabularyXrefVocabulary(Base):
     __tablename__ = "vocabulary_xref_vocabulary"
-    __table_args__ = {"schema": "nccrd"}
+    __table_args__ = (
+        UniqueConstraint("child_id", "tree_id", name="vocabulary_xref_vocabulary_child_id_tree_id_key"),
+        {"schema": "nccrd"},
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
 
     parent_id = Column(Integer, ForeignKey("nccrd.vocabulary.id"))

@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -68,7 +68,10 @@ class Permission(Base):
 
 class PermissionXrefRole(Base):
     __tablename__ = "permission_xref_role"
-    __table_args__ = {"schema": "nccrd"}
+    __table_args__ = (
+        UniqueConstraint("permission_id", "role_id", name="permission_xref_role_permission_id_role_id_key"),
+        {"schema": "nccrd"},
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     permission_id = Column(Integer, ForeignKey("nccrd.permission.id"), nullable=False)
@@ -103,7 +106,10 @@ class TenantXrefSubmission(Base):
 
 class UserXrefRoleXrefTenant(Base):
     __tablename__ = "user_xref_role_xref_tenant"
-    __table_args__ = {"schema": "nccrd"}
+    __table_args__ = (
+        UniqueConstraint("user_id", "role_id", "tenant_id", name="user_xref_role_xref_tenant_user_id_role_id_tenant_id_key"),
+        {"schema": "nccrd"},
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("nccrd.user.id"), nullable=False)

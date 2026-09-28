@@ -144,6 +144,7 @@ def upgrade() -> None:
     sa.Column('name', sa.String(), nullable=True),
     sa.Column('description', sa.String(), nullable=True),
     sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('name', name='tree_name_key'),
     schema='nccrd'
     )
     op.create_table('user',
@@ -178,6 +179,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['permission_id'], ['nccrd.permission.id'], ),
     sa.ForeignKeyConstraint(['role_id'], ['nccrd.role.id'], ),
     sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('permission_id', 'role_id', name='permission_xref_role_permission_id_role_id_key'),
     schema='nccrd'
     )
     op.create_table('submission',
@@ -232,6 +234,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['tenant_id'], ['nccrd.tenant.id'], ),
     sa.ForeignKeyConstraint(['user_id'], ['nccrd.user.id'], ),
     sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('user_id', 'role_id', 'tenant_id', name='user_xref_role_xref_tenant_user_id_role_id_tenant_id_key'),
     schema='nccrd'
     )
     op.create_table('vocabulary_xref_tree',
@@ -241,6 +244,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['tree_id'], ['nccrd.tree.id'], ),
     sa.ForeignKeyConstraint(['vocabulary_id'], ['nccrd.vocabulary.id'], ),
     sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('vocabulary_id', 'tree_id', name='vocabulary_xref_tree_vocabulary_id_tree_id_key'),
     schema='nccrd'
     )
     op.create_table('vocabulary_xref_vocabulary',
@@ -252,6 +256,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['parent_id'], ['nccrd.vocabulary.id'], ),
     sa.ForeignKeyConstraint(['tree_id'], ['nccrd.tree.id'], ),
     sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('child_id', 'tree_id', name='vocabulary_xref_vocabulary_child_id_tree_id_key'),
     schema='nccrd'
     )
     op.create_table('adaptation',
@@ -307,7 +312,7 @@ def upgrade() -> None:
     sa.Column('file_name', sa.String(), nullable=False),
     sa.Column('upload_date', sa.DateTime(), nullable=True),
     sa.Column('notes', sa.Text(), nullable=True),
-    sa.ForeignKeyConstraint(['submission_id'], ['nccrd.submission.id'], ),
+    sa.ForeignKeyConstraint(['submission_id'], ['nccrd.submission.id'], name='fk_progress_report_submission_id', ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     schema='nccrd'
     )
