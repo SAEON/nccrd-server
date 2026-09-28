@@ -34,12 +34,18 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-# Tables/indexes created via raw DDL in migration 0001 (see its docstring)
-# that have no corresponding SQLAlchemy ORM model. Without this filter,
+# Secondary indexes created via raw DDL in migration 0001 (see its
+# docstring) that have no corresponding SQLAlchemy Index() declaration on
+# any model — deliberately, matching this codebase's existing style of not
+# modeling every secondary index (true even for indexes on tables that do
+# have a model, e.g. idx_submission_createdby). Without this filter,
 # autogenerate/`alembic check` always sees them as "extra" objects to drop,
-# drowning out genuine future drift. Excluded here rather than fixed by
-# adding models, since that's a larger change than this filter's job.
-_UNMAPPED_TABLES = {"download_log", "vocabulary_xref_region", "login", "research"}
+# drowning out genuine future drift.
+#
+# The 4 tables (download_log, vocabulary_xref_region, login, research)
+# these indexes originally lived alongside now have real ORM models — see
+# nccrd/db/models/rbac.py, submission.py, vocabulary.py — so only the
+# index names remain excluded here, not the tables themselves.
 _UNMAPPED_INDEXES = {
     "idx_download_log_user_id", "idx_login_user_id",
     "idx_adaptation_submission_id", "idx_mitigation_submission_id",
@@ -50,11 +56,7 @@ _UNMAPPED_INDEXES = {
 
 
 def include_object(object, name, type_, reflected, compare_to):
-    if type_ == "table" and name in _UNMAPPED_TABLES:
-        return False
-    if type_ == "index" and name in _UNMAPPED_INDEXES:
-        return False
-    return True
+    return not (type_ == "index" and name in _UNMAPPED_INDEXES)
 
 
 def run_migrations_offline() -> None:

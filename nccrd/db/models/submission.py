@@ -29,6 +29,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
 )
@@ -317,3 +318,20 @@ class ProgressReport(Base):
         "Submission",
         back_populates="progress_reports",
     )
+
+
+class Research(Base):
+    """Raw research-source payload attached to a Submission — created via
+    raw DDL in migration 0001 (see its docstring), had no ORM model until
+    now."""
+
+    __tablename__ = "research"
+    __table_args__ = {"schema": "nccrd"}
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    submission_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("nccrd.submission.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    raw_data = Column(JSON)

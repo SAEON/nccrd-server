@@ -3,12 +3,13 @@ from .submission import (
     Adaptation,      # Renamed from Adaptaion (typo corrected).
     Mitigation,
     ProgressReport,  # New MRV model.
+    Research,
     InterventionMeasurement,
     ImplementationStatus,
     FundingType,
 )
 from .region import Country, Province, District, LocalDistrict
-from .vocabulary import Vocabulary, Trees, VocabularyXrefTree, VocabularyXrefVocabulary
+from .vocabulary import Vocabulary, Trees, VocabularyXrefTree, VocabularyXrefVocabulary, VocabularyXrefRegion
 from .rbac import (
     User,
     Role,
@@ -17,4 +18,6 @@ from .rbac import (
     Tenant,
     TenantXrefSubmission,
     UserXrefRoleXrefTenant,
+    Login,
+    DownloadLog,
 )

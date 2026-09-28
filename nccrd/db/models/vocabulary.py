@@ -41,3 +41,15 @@ class VocabularyXrefVocabulary(Base):
     parent_id = Column(Integer, ForeignKey("nccrd.vocabulary.id"))
     child_id = Column(Integer, ForeignKey("nccrd.vocabulary.id"))
     tree_id = Column(Integer, ForeignKey("nccrd.tree.id"))
+
+
+class VocabularyXrefRegion(Base):
+    """Links a vocabulary term to a region code — created via raw DDL in
+    migration 0001 (see its docstring), had no ORM model until now."""
+
+    __tablename__ = "vocabulary_xref_region"
+    __table_args__ = {"schema": "nccrd"}
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    vocabulary_id = Column(Integer, ForeignKey("nccrd.vocabulary.id"), nullable=False)
+    region_code = Column(String(50), nullable=False)

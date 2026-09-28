@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -113,3 +113,29 @@ class UserXrefRoleXrefTenant(Base):
     user = relationship("User", back_populates="role_assignments")
     role = relationship("Role")
     tenant = relationship("Tenant")
+
+
+class Login(Base):
+    """Audit record of a successful login — created via raw DDL in migration
+    0001 (see its docstring), had no ORM model until now."""
+
+    __tablename__ = "login"
+    __table_args__ = {"schema": "nccrd"}
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("nccrd.user.id"))
+    timestamp = Column(DateTime, server_default=func.now(), nullable=False)
+
+
+class DownloadLog(Base):
+    """Audit record of a submission-data download — created via raw DDL in
+    migration 0001 (see its docstring), had no ORM model until now."""
+
+    __tablename__ = "download_log"
+    __table_args__ = {"schema": "nccrd"}
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("nccrd.user.id"))
+    timestamp = Column(DateTime, server_default=func.now(), nullable=False)
+    submission_ids = Column(JSON)
+    submission_search = Column(Text)
