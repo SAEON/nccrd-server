@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from nccrd.api.routers import auth, submission, region, rbac, vocabulary
+from nccrd.api.routers import auth, submission, region, rbac, report, vocabulary
 from nccrd.api.routers.submission import PROGRESS_REPORT_UPLOAD_DIR
 from nccrd.config import nccrd_config
 from nccrd.version import VERSION
@@ -26,6 +26,7 @@ app.include_router(submission.router, prefix='/submission', tags=['Submission'])
 app.include_router(region.router, prefix='/region', tags=['Region'])
 app.include_router(rbac.router, prefix='/rbac', tags=['RBAC'])
 app.include_router(vocabulary.router, prefix='/vocabulary', tags=['Vocabulary'])
+app.include_router(report.router, prefix='/report', tags=['Report'])
 
 # Serves progress-report (MRV) uploads back out — file_url values point here.
 app.mount(

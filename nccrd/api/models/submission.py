@@ -499,6 +499,11 @@ class SubmissionUpdate(BaseModel):
     issubmitted: Optional[bool] = None
     research: Optional[str] = None
 
+    # Optimistic concurrency: the ``updatedate`` the client loaded. If the
+    # submission has been saved since, the update is rejected with 409 instead
+    # of silently overwriting the other edit. Omit it to skip the check.
+    expected_updatedate: Optional[datetime] = None
+
     # Metadata fields that can be updated by administrative processes.
     createdby: Optional[int] = None
     createdate: Optional[datetime] = None

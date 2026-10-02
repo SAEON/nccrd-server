@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -96,7 +96,12 @@ class Tenant(Base):
 
 class TenantXrefSubmission(Base):
     __tablename__ = "tenant_xref_submission"
-    __table_args__ = {"schema": "nccrd"}
+    __table_args__ = (
+        # Tenant scoping looks rows up by submission_id alone, which the
+        # (tenant_id, submission_id) primary key can't serve. See migration 0002.
+        Index("idx_tenant_xref_submission_submission_id", "submission_id"),
+        {"schema": "nccrd"},
+    )
 
     tenant_id = Column(Integer, ForeignKey("nccrd.tenant.id"), primary_key=True)
     submission_id = Column(

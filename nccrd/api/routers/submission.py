@@ -30,20 +30,23 @@ Changelog vs. previous version
 
 from __future__ import annotations
 
+import ast
+from collections import Counter, defaultdict
+import re
 import traceback
 import uuid as uuid_lib
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, Form
 from openpyxl import load_workbook
-from sqlalchemy import and_, exists, or_
+from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Query as SAQuery, Session
 
-from nccrd.api.lib.auth import Authorized
+from nccrd.api.lib.auth import Authorized, OptionalAuthorize
 from nccrd.api.lib.permissions import RequirePermission
 from nccrd.api.lib.tenant import get_current_tenant
 from nccrd.api.models import (
@@ -61,7 +64,8 @@ from nccrd.api.models.submission import (
 )
 from nccrd.db import get_db
 from nccrd.db.models import Submission, Adaptation, Mitigation, ProgressReport, Vocabulary
-from nccrd.db.models.rbac import Tenant, TenantXrefSubmission
+from nccrd.db.models.region import District, LocalDistrict, Province
+from nccrd.db.models.rbac import Tenant, TenantXrefSubmission, User
 
 #: Local-disk storage for progress-report (MRV) uploads. Mounted as a Docker
 #: volume in production (see deploy/docker-compose.yml) so files survive
@@ -187,6 +191,101 @@ def _link_submission_to_tenant(db: Session, submission_id, tenant: Tenant) -> No
     db.add(TenantXrefSubmission(tenant_id=tenant.id, submission_id=submission_id))
 
 
+#: Legacy vocabulary ids stored in place of a name (40-char SHA-1 hex); they
+#: don't resolve against the Vocabulary table, so they are useless as facets.
+_VOCAB_HASH_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _vocab_terms(value: Any) -> List[str]:
+    """
+    Extract the human-readable term(s) from a vocabulary-backed value.
+
+    Legacy rows store these fields in several shapes: a plain string, a list of
+    ``{"term": ...}`` dicts (JSONB), or the Python ``repr`` of such a list saved
+    into a text column (e.g. ``adaptation.hazard``). All are reduced to a flat
+    list of term strings; blanks and unresolvable hash ids are dropped.
+    """
+    if isinstance(value, str) and value.startswith("["):
+        try:
+            value = ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            pass
+    items = value if isinstance(value, list) else [value]
+    terms = []
+    for item in items:
+        term = item.get("term") if isinstance(item, dict) else item
+        if isinstance(term, str) and term.strip() and not _VOCAB_HASH_RE.match(term):
+            terms.append(term.strip())
+    return terms
+
+
+def merge_case_variants(weighted: Iterable[Tuple[str, int]]) -> Counter:
+    """
+    Fold terms that differ only in case ("Energy" / "ENERGY", common in legacy
+    data) into one, labelled with the spelling used most often.
+    """
+    totals: Counter = Counter()
+    spellings: Dict[str, Counter] = defaultdict(Counter)
+    for term, n in weighted:
+        key = term.casefold()
+        totals[key] += n
+        spellings[key][term] += n
+    return Counter({spellings[key].most_common(1)[0][0]: n for key, n in totals.items()})
+
+
+def _distinct_terms(rows: Iterable[Tuple[Any, int]]) -> List[str]:
+    """Sorted terms across ``(raw column value, row count)`` pairs, case variants merged."""
+    return sorted(merge_case_variants((term, n) for value, n in rows for term in _vocab_terms(value)))
+
+
+def _term_filter(column, term: str):
+    """
+    Match ``term`` in a vocabulary-backed text column, whether the row holds the
+    plain term (possibly with stray whitespace) or the ``repr`` of a list of
+    term dicts (see ``_vocab_terms``). Case-insensitive, matching how facets
+    merge case variants (see ``merge_case_variants``).
+    """
+    term = term.strip()
+    return or_(
+        func.lower(func.trim(column)) == term.lower(),
+        func.lower(column).contains(f"'term': {term!r}".lower(), autoescape=True),
+    )
+
+
+def _check_not_modified_since(db: Session, submission: Submission, expected: Optional[datetime]) -> None:
+    """
+    Raise 409 if ``submission`` was saved after the client loaded it, i.e. its
+    ``updatedate`` no longer matches the one the client was editing. The detail
+    names who saved it and when, so the UI can let the user decide.
+    """
+    if expected is not None and expected.tzinfo is not None:
+        # Stored timestamps are naive UTC (``datetime.utcnow()``).
+        expected = expected.astimezone(timezone.utc).replace(tzinfo=None)
+    if submission.updatedate == expected:
+        return
+    editor = db.query(User).filter(User.id == submission.updatedby).first() if submission.updatedby else None
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "message": "This project was changed by someone else after you opened it.",
+            "updatedate": submission.updatedate.isoformat() if submission.updatedate else None,
+            "updatedby": editor.name if editor else None,
+        },
+    )
+
+
+def _province_filter(province: str):
+    """
+    Match ``province`` in ``geo_location``, which holds it either as a plain
+    string or as a list of ``{"term": ...}`` dicts. Both branches use the JSONB
+    ``@>`` containment operator.
+    """
+    return or_(
+        Submission.geo_location.contains({"province": province}),
+        Submission.geo_location.contains({"province": [{"term": province}]}),
+    )
+
+
 def _normalize_intervention_measurement(raw: str) -> str:
     """Normalise a free-text measure type to a canonical enum value."""
     lowered = raw.strip().lower()
@@ -251,6 +350,33 @@ def _parse_sheet_rows(
     return parsed_rows
 
 
+#: geo_location key -> (region code column, region name column).
+_REGION_LOOKUPS = {
+    "province": (Province.PR_MDB_C, Province.PR_NAME),
+    "district": (District.DISTRICT, District.DISTRICT_N),
+    "local_municipality": (LocalDistrict.CAT_B, LocalDistrict.MUNICNAME),
+}
+
+
+def _region_codes_to_names(db: Session, geo: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    Store region *names* in ``geo_location``, as every legacy and imported
+    project does. The submission form picks regions from code-keyed lists
+    ("WC", "CPT"), and saving those codes made new projects invisible to the
+    province filter and showed raw codes in reports. Values that aren't a
+    known code (already a name, free text) are left as they are.
+    """
+    if not geo:
+        return geo
+    for key, (code_column, name_column) in _REGION_LOOKUPS.items():
+        value = geo.get(key)
+        if isinstance(value, str) and value.strip():
+            name = db.query(name_column).filter(code_column == value.strip()).limit(1).scalar()
+            if name:
+                geo[key] = name.strip()
+    return geo
+
+
 def _build_geo_location(row_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Assemble a GeoLocationSchema-compatible dict from the ``_geo_*`` sentinel
@@ -284,12 +410,15 @@ def _build_geo_location(row_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-@router.get(
-    "/list_submission",
-    response_model=List[SubmissionModel],
-    summary="List all submissions, optionally filtered by any facet field.",
-)
-def get_submissions_list(
+class SubmissionFilters:
+    """
+    Query parameters shared by every endpoint that lists submissions (the
+    project search, report summaries, exports), so they all filter alike.
+    Use as ``filters: SubmissionFilters = Depends()``.
+    """
+
+    def __init__(
+            self,
         submission_id: Optional[str] = None,
         implementation_status: Optional[str] = None,
         implementation_organization: Optional[str] = None,
@@ -318,47 +447,55 @@ def get_submissions_list(
         intervention_measurement: Optional[str] = None,
         # Full-text search.
         q: Optional[str] = None,
-        db: Session = Depends(get_db),
-        tenant: Tenant = Depends(get_current_tenant),
-) -> List[Submission]:
+            # Only the caller's own submissions (requires login).
+            mine: bool = False,
+            auth: Optional[Authorized] = Depends(OptionalAuthorize()),
+    ):
+        self.__dict__.update({k: v for k, v in locals().items() if k not in ("self", "auth")})
+        self.user_id = auth.internal_user_id if auth else None
+
+    def as_dict(self) -> Dict[str, Any]:
+        """The filters actually set, e.g. for logging what an export contained."""
+        return {k: v for k, v in vars(self).items() if v and k != "user_id"}
+
+
+def filtered_submissions(db: Session, tenant: Tenant, f: SubmissionFilters) -> SAQuery:
     """
-    Return all non-deleted submissions, optionally filtered by any combination
-    of facet values.
+    Non-deleted submissions visible to ``tenant``, narrowed by ``f``.
 
     JSONB province filtering uses the PostgreSQL ``@>`` containment operator
-    for correctness and index-friendliness. Results are scoped to the tenant
-    resolved from the request's Host header (see `get_current_tenant`).
+    (see ``_province_filter``); vocabulary-backed columns match by term in any
+    of their legacy storage shapes (see ``_term_filter``).
     """
-
     query = db.query(Submission).filter(Submission.deleted.isnot(True))
     query = _scope_to_tenant(query, tenant)
 
-    if submission_id:
-        query = query.filter(Submission.id == submission_id)
-    if implementation_status:
-        query = query.filter(Submission.implementation_status == implementation_status)
-    if implementation_organization:
-        query = query.filter(
-            Submission.implementation_organization == implementation_organization
-        )
-    if funding_organization:
-        query = query.filter(Submission.funding_organization == funding_organization)
-    if funding_type:
-        query = query.filter(Submission.funding_type == funding_type)
-    if submission_status:
-        query = query.filter(Submission.submission_status == submission_status)
-    if research:
-        query = query.filter(Submission.research == research)
+    if f.mine:
+        if f.user_id is None:
+            raise HTTPException(status_code=401, detail="Log in to see your own submissions.")
+        query = query.filter(Submission.createdby == f.user_id)
 
-    if province:
-        # Use JSONB containment (@>) for accurate, index-efficient matching.
-        query = query.filter(
-            Submission.geo_location.contains({"province": province})
-        )
+    if f.submission_id:
+        query = query.filter(Submission.id == f.submission_id)
+    if f.implementation_status:
+        query = query.filter(_term_filter(Submission.implementation_status, f.implementation_status))
+    if f.implementation_organization:
+        query = query.filter(_term_filter(Submission.implementation_organization, f.implementation_organization))
+    if f.funding_organization:
+        query = query.filter(_term_filter(Submission.funding_organization, f.funding_organization))
+    if f.funding_type:
+        query = query.filter(_term_filter(Submission.funding_type, f.funding_type))
+    if f.submission_status:
+        query = query.filter(_term_filter(Submission.submission_status, f.submission_status))
+    if f.research:
+        query = query.filter(_term_filter(Submission.research, f.research))
 
-    if intervention_measurement:
+    if f.province:
+        query = query.filter(_province_filter(f.province))
+
+    if f.intervention_measurement:
         # Support comma-separated multi-select, e.g. "Mitigation,Adaptation".
-        types = [t.strip() for t in intervention_measurement.split(",")]
+        types = [t.strip() for t in f.intervention_measurement.split(",")]
         if len(types) > 1:
             query = query.filter(Submission.intervention_measurement.in_(types))
         else:
@@ -366,69 +503,94 @@ def get_submissions_list(
 
     # ── Adaptation join + filters ─────────────────────────────────────────────
     adaptation_filters = [
-        adaptation_sector,
-        adaptation_national_policy,
-        adaptation_hazard,
-        adaptation_climate_impact,
+        f.adaptation_sector,
+        f.adaptation_national_policy,
+        f.adaptation_hazard,
+        f.adaptation_climate_impact,
     ]
     if any(adaptation_filters):
         query = query.join(Adaptation, Adaptation.submission_id == Submission.id)
-        if adaptation_sector:
-            query = query.filter(Adaptation.sector == adaptation_sector)
-        if adaptation_national_policy:
-            query = query.filter(Adaptation.national_policy == adaptation_national_policy)
-        if adaptation_hazard:
-            query = query.filter(Adaptation.hazard == adaptation_hazard)
-        if adaptation_climate_impact:
-            query = query.filter(Adaptation.climate_impact == adaptation_climate_impact)
+        if f.adaptation_sector:
+            query = query.filter(_term_filter(Adaptation.sector, f.adaptation_sector))
+        if f.adaptation_national_policy:
+            query = query.filter(_term_filter(Adaptation.national_policy, f.adaptation_national_policy))
+        if f.adaptation_hazard:
+            query = query.filter(_term_filter(Adaptation.hazard, f.adaptation_hazard))
+        if f.adaptation_climate_impact:
+            query = query.filter(_term_filter(Adaptation.climate_impact, f.adaptation_climate_impact))
 
     # ── Mitigation join + filters ─────────────────────────────────────────────
     mitigation_filters = [
-        mitigation_sector,
-        mitigation_subsector,
-        mitigation_project_type,
-        mitigation_program,
-        mitigation_national_policy,
-        mitigation_primary_intended_outcome,
-        mitigation_environmental_co_benefit,
-        mitigation_social_co_benefit,
-        mitigation_economic_co_benefit,
-        mitigation_carbon_credit,
+        f.mitigation_sector,
+        f.mitigation_subsector,
+        f.mitigation_project_type,
+        f.mitigation_program,
+        f.mitigation_national_policy,
+        f.mitigation_primary_intended_outcome,
+        f.mitigation_environmental_co_benefit,
+        f.mitigation_social_co_benefit,
+        f.mitigation_economic_co_benefit,
+        f.mitigation_carbon_credit,
     ]
     if any(mitigation_filters):
         query = query.join(Mitigation, Mitigation.submission_id == Submission.id)
-        if mitigation_sector:
-            query = query.filter(Mitigation.sector == mitigation_sector)
-        if mitigation_subsector:
-            query = query.filter(Mitigation.subsector == mitigation_subsector)
-        if mitigation_project_type:
-            query = query.filter(Mitigation.project_type == mitigation_project_type)
-        if mitigation_program:
-            query = query.filter(Mitigation.mitigation_program == mitigation_program)
-        if mitigation_national_policy:
-            query = query.filter(Mitigation.national_policy == mitigation_national_policy)
-        if mitigation_primary_intended_outcome:
+        if f.mitigation_sector:
+            query = query.filter(_term_filter(Mitigation.sector, f.mitigation_sector))
+        if f.mitigation_subsector:
+            query = query.filter(_term_filter(Mitigation.subsector, f.mitigation_subsector))
+        if f.mitigation_project_type:
+            query = query.filter(_term_filter(Mitigation.project_type, f.mitigation_project_type))
+        if f.mitigation_program:
+            query = query.filter(_term_filter(Mitigation.mitigation_program, f.mitigation_program))
+        if f.mitigation_national_policy:
+            query = query.filter(_term_filter(Mitigation.national_policy, f.mitigation_national_policy))
+        if f.mitigation_primary_intended_outcome:
             query = query.filter(
-                Mitigation.primary_intended_outcome == mitigation_primary_intended_outcome
+                _term_filter(Mitigation.primary_intended_outcome, f.mitigation_primary_intended_outcome)
             )
-        if mitigation_environmental_co_benefit:
+        if f.mitigation_environmental_co_benefit:
             query = query.filter(
-                Mitigation.environmental_co_benefit == mitigation_environmental_co_benefit
+                _term_filter(Mitigation.environmental_co_benefit, f.mitigation_environmental_co_benefit)
             )
-        if mitigation_social_co_benefit:
-            query = query.filter(Mitigation.social_co_benefit == mitigation_social_co_benefit)
-        if mitigation_economic_co_benefit:
+        if f.mitigation_social_co_benefit:
+            query = query.filter(_term_filter(Mitigation.social_co_benefit, f.mitigation_social_co_benefit))
+        if f.mitigation_economic_co_benefit:
             query = query.filter(
-                Mitigation.economic_co_benefit == mitigation_economic_co_benefit
+                _term_filter(Mitigation.economic_co_benefit, f.mitigation_economic_co_benefit)
             )
-        if mitigation_carbon_credit:
-            query = query.filter(Mitigation.carbon_credit == mitigation_carbon_credit)
+        if f.mitigation_carbon_credit:
+            query = query.filter(_term_filter(Mitigation.carbon_credit, f.mitigation_carbon_credit))
 
     # ── Full-text title search ────────────────────────────────────────────────
-    if q:
-        query = query.filter(Submission.title.ilike(f"%{q}%"))
+    if f.q:
+        query = query.filter(Submission.title.ilike(f"%{f.q}%"))
 
-    return query.all()
+    return query
+
+
+@router.get(
+    "/list_submission",
+    response_model=List[SubmissionModel],
+    summary="List all submissions, optionally filtered by any facet field.",
+)
+def get_submissions_list(
+        filters: SubmissionFilters = Depends(),
+        db: Session = Depends(get_db),
+        tenant: Tenant = Depends(get_current_tenant),
+) -> Response:
+    """
+    Return all non-deleted submissions visible to the tenant resolved from the
+    request's Host header, optionally filtered by any combination of facets.
+    """
+    query = filtered_submissions(db, tenant, filters)
+
+    # FastAPI's jsonable_encoder takes ~1 s for the full list (~3k rows);
+    # pydantic's own .json() gives identical output in ~0.3 s. Returning a
+    # Response bypasses the encoder (response_model still documents the shape).
+    return Response(
+        content="[" + ",".join(SubmissionModel.from_orm(r).json() for r in query.all()) + "]",
+        media_type="application/json",
+    )
 
 
 @router.get(
@@ -495,10 +657,8 @@ def create_submission(
     Persist a new submission.  Mitigation / Adaptation child records are
     created automatically based on ``intervention_measurement``.
     """
-    geo_dict = (
-        submission.geo_location.dict(exclude_none=True)
-        if submission.geo_location
-        else None
+    geo_dict = _region_codes_to_names(
+        db, submission.geo_location.dict(exclude_none=True) if submission.geo_location else None
     )
 
     db_submission = Submission(
@@ -587,13 +747,16 @@ def update_submission(
 
     data = update_data.dict(exclude_unset=True)
 
+    if "expected_updatedate" in data:
+        _check_not_modified_since(db, submission, data.pop("expected_updatedate"))
+
     # Pull nested payloads out before applying scalar updates.
     mitigation_update: Optional[Dict[str, Any]] = data.pop("mitigation_data", None)
     adaptation_update: Optional[Dict[str, Any]] = data.pop("adaptation_data", None)
 
     # Convert geo_location Pydantic sub-model to dict if present.
     if "geo_location" in data and isinstance(data["geo_location"], GeoLocationSchema):
-        data["geo_location"] = data["geo_location"].dict(exclude_none=True)
+        data["geo_location"] = _region_codes_to_names(db, data["geo_location"].dict(exclude_none=True))
 
     new_intervention: str = (
         data.get("intervention_measurement", submission.intervention_measurement)
@@ -793,7 +956,7 @@ async def create_submission_upload_xlsx(
 
     for row_idx, general_row in enumerate(general_rows, start=2):  # start=2 → Excel row number.
         # Extract and build geo_location.
-        geo_dict = _build_geo_location(general_row)
+        geo_dict = _region_codes_to_names(db, _build_geo_location(general_row))
         if geo_dict:
             general_row["geo_location"] = geo_dict
 
@@ -935,69 +1098,48 @@ async def create_submission_upload_xlsx(
     "/facets/submission",
     summary="Return all distinct facet values available for filtering submissions.",
 )
-def get_submission_facets(db: Session = Depends(get_db)) -> Dict[str, List[Any]]:
-    """Aggregate distinct values across Submission, Adaptation, and Mitigation."""
+def get_submission_facets(
+        db: Session = Depends(get_db),
+        tenant: Tenant = Depends(get_current_tenant),
+) -> Dict[str, List[Any]]:
+    """
+    Aggregate distinct values across Submission, Adaptation, and Mitigation.
+
+    Each facet is a sorted list of plain terms, flattened out of the legacy
+    storage shapes by ``_vocab_terms`` so every option round-trips through the
+    matching ``list_submission`` filter. Values are drawn only from the
+    non-deleted submissions this tenant can see, so no option returns nothing.
+    """
+    def distinct(column) -> List[str]:
+        query = db.query(column, func.count())
+        model = getattr(column, "class_", Submission)  # JSONB paths have no class_
+        if model is not Submission:
+            query = query.join(Submission, Submission.id == model.submission_id)
+        query = _scope_to_tenant(query.filter(Submission.deleted.isnot(True)), tenant)
+        return _distinct_terms(query.group_by(column))
+
     return {
-        "implementation_status": [
-            r[0] for r in db.query(Submission.implementation_status).distinct()
-        ],
-        "implementation_organization": [
-            r[0] for r in db.query(Submission.implementation_organization).distinct()
-        ],
-        "funding_organization": [
-            r[0] for r in db.query(Submission.funding_organization).distinct()
-        ],
-        "funding_type": [
-            r[0] for r in db.query(Submission.funding_type).distinct()
-        ],
-        "submission_status": [
-            r[0] for r in db.query(Submission.submission_status).distinct()
-        ],
-        "research": [
-            r[0] for r in db.query(Submission.research).distinct()
-        ],
-        "adaptation_sector": [
-            r[0] for r in db.query(Adaptation.sector).distinct()
-        ],
-        "adaptation_national_policy": [
-            r[0] for r in db.query(Adaptation.national_policy).distinct()
-        ],
-        "adaptation_hazard": [
-            r[0] for r in db.query(Adaptation.hazard).distinct()
-        ],
-        "adaptation_climate_impact": [
-            r[0] for r in db.query(Adaptation.climate_impact).distinct()
-        ],
-        "mitigation_sector": [
-            r[0] for r in db.query(Mitigation.sector).distinct()
-        ],
-        "mitigation_subsector": [
-            r[0] for r in db.query(Mitigation.subsector).distinct()
-        ],
-        "mitigation_project_type": [
-            r[0] for r in db.query(Mitigation.project_type).distinct()
-        ],
-        "mitigation_program": [
-            r[0] for r in db.query(Mitigation.mitigation_program).distinct()
-        ],
-        "mitigation_national_policy": [
-            r[0] for r in db.query(Mitigation.national_policy).distinct()
-        ],
-        "mitigation_primary_intended_outcome": [
-            r[0] for r in db.query(Mitigation.primary_intended_outcome).distinct()
-        ],
-        "mitigation_environmental_co_benefit": [
-            r[0] for r in db.query(Mitigation.environmental_co_benefit).distinct()
-        ],
-        "mitigation_social_co_benefit": [
-            r[0] for r in db.query(Mitigation.social_co_benefit).distinct()
-        ],
-        "mitigation_economic_co_benefit": [
-            r[0] for r in db.query(Mitigation.economic_co_benefit).distinct()
-        ],
-        "mitigation_carbon_credit": [
-            r[0] for r in db.query(Mitigation.carbon_credit).distinct()
-        ],
+        "implementation_status": distinct(Submission.implementation_status),
+        "implementation_organization": distinct(Submission.implementation_organization),
+        "funding_organization": distinct(Submission.funding_organization),
+        "funding_type": distinct(Submission.funding_type),
+        "submission_status": distinct(Submission.submission_status),
+        "research": distinct(Submission.research),
+        "province": distinct(Submission.geo_location["province"]),
+        "adaptation_sector": distinct(Adaptation.sector),
+        "adaptation_national_policy": distinct(Adaptation.national_policy),
+        "adaptation_hazard": distinct(Adaptation.hazard),
+        "adaptation_climate_impact": distinct(Adaptation.climate_impact),
+        "mitigation_sector": distinct(Mitigation.sector),
+        "mitigation_subsector": distinct(Mitigation.subsector),
+        "mitigation_project_type": distinct(Mitigation.project_type),
+        "mitigation_program": distinct(Mitigation.mitigation_program),
+        "mitigation_national_policy": distinct(Mitigation.national_policy),
+        "mitigation_primary_intended_outcome": distinct(Mitigation.primary_intended_outcome),
+        "mitigation_environmental_co_benefit": distinct(Mitigation.environmental_co_benefit),
+        "mitigation_social_co_benefit": distinct(Mitigation.social_co_benefit),
+        "mitigation_economic_co_benefit": distinct(Mitigation.economic_co_benefit),
+        "mitigation_carbon_credit": distinct(Mitigation.carbon_credit),
     }
 
 

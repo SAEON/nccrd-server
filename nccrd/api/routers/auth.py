@@ -42,6 +42,28 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
 
 
 @router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    summary="Exchange a still-valid access token for a fresh one.",
+)
+def refresh(
+        db: Session = Depends(get_db),
+        auth: Authorized = Depends(Authorize()),
+) -> TokenResponse:
+    """
+    Lets an active session outlive the fixed token lifetime: the frontend
+    calls this while the user is working, so nobody is logged out mid-capture.
+    An expired or revoked token is rejected by ``Authorize`` like any request.
+    """
+    user = db.query(User).filter(User.id == auth.internal_user_id).first()
+    return TokenResponse(
+        access_token=create_access_token(user),
+        expires_in=nccrd_config.NCCRD.JWT_EXPIRES_MINUTES * 60,
+        must_change_password=user.password_set_at is None,
+    )
+
+
+@router.post(
     "/change-password",
     summary="Change the current user's password.",
 )

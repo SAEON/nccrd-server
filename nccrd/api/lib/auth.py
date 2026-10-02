@@ -148,3 +148,18 @@ class Authorize(HTTPBearer):
 
     async def __call__(self, request: Request, db: Session = Depends(get_db)) -> Authorized:
         return _authorize_request(request, db)
+
+
+class OptionalAuthorize(HTTPBearer):
+    """FastAPI dependency for public endpoints that behave differently for a
+    logged-in caller: resolves the identity when a valid token is sent, and
+    returns None (instead of raising 401) for anonymous or invalid requests."""
+
+    def __init__(self):
+        super().__init__(auto_error=False, scheme_name='Bearer')
+
+    async def __call__(self, request: Request, db: Session = Depends(get_db)) -> Optional[Authorized]:
+        try:
+            return _authorize_request(request, db)
+        except HTTPException:
+            return None
