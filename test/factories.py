@@ -34,7 +34,10 @@ class SubmissionFactory(NCCRDModelFactory):
     description = factory.Faker('text')
     implementation_status = factory.Iterator(['Planned', 'Under Implementation', 'Completed'])
     createdate = factory.LazyFunction(lambda: datetime.now(timezone.utc))
-    issubmitted = False
+    # Published by default (submitted + accepted), since that's what the public
+    # endpoints list; tests about drafts or the review queue override these.
+    issubmitted = True
+    submission_status = 'Accepted'
     deleted = False
 
 

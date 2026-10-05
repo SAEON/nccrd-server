@@ -63,8 +63,16 @@ class ImplementationStatus(str, enum.Enum):
 
 
 class FundingType(str, enum.Enum):
-    """Recognised funding mechanism categories."""
+    """
+    Recognised funding mechanism categories: the submission form's own, plus
+    the legacy NCCRD "fundingTypes" vocabulary (see migration 0003).
+    """
 
+    GOVERNMENT = "Government"
+    DOMESTIC = "Domestic"
+    INTERNATIONAL_GRANT = "International grant"
+    INTERNATIONAL_LOAN = "International loan"
+    PRIVATE = "Private"
     GRANT = "Grant"
     LOAN = "Loan"
     OWN_FUNDING = "Own Funding"

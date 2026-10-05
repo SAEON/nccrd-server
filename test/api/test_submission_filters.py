@@ -121,3 +121,29 @@ def test_mine_shows_only_the_callers_submissions_everywhere(client, api):
 def test_mine_requires_login(client):
     anonymous = client.get('/submission/list_submission', params={'mine': 'true'}, headers={'Authorization': ''})
     assert anonymous.status_code == 401
+
+
+def test_budget_range_and_regional_policy_filters(client):
+    a = SubmissionFactory(title='a', estimated_budget_cost='R1m - R5m', intervention_measurement='Mitigation')
+    MitigationFactory(submission_id=a.id, provincial_municipal=' City of Joburg ')
+    b = SubmissionFactory(title='b', estimated_budget_cost='> R100m', intervention_measurement='Adaptation')
+    AdaptationFactory(submission_id=b.id, provincial_municipal="[{'term': 'Biodiversity Sector & Management Plan'}]")
+
+    facets = client.get('/submission/facets/submission').json()
+    assert facets['estimated_budget_cost'] == ['> R100m', 'R1m - R5m']
+    assert facets['mitigation_regional_policy'] == ['City of Joburg']
+    assert facets['adaptation_regional_policy'] == ['Biodiversity Sector & Management Plan']
+
+    assert _titles(client, estimated_budget_cost='R1m - R5m') == {'a'}
+    assert _titles(client, mitigation_regional_policy='City of Joburg') == {'a'}
+    assert _titles(client, adaptation_regional_policy='Biodiversity Sector & Management Plan') == {'b'}
+
+
+def test_province_filter_ignores_case(client):
+    SubmissionFactory(title='form', geo_location={'province': 'Kwazulu-Natal'})          # region-table spelling
+    SubmissionFactory(title='legacy', geo_location={'province': [{'term': 'KwaZulu-Natal'}]})
+    SubmissionFactory(title='other', geo_location={'province': 'Gauteng'})
+
+    assert _titles(client, province='KwaZulu-Natal') == {'form', 'legacy'}
+    # One option for both spellings (which spelling labels it is a tie here).
+    assert [p.casefold() for p in client.get('/submission/facets/submission').json()['province']] == ['gauteng', 'kwazulu-natal']

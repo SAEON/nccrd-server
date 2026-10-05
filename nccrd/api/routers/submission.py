@@ -6,9 +6,8 @@ Changelog vs. previous version
 * All references to ``Adaptaion`` updated to ``Adaptation``.
 * ``project_manager_position`` / ``_phone`` / ``_mobile`` replaced with
   ``project_manager_contact_number``; ``platfrom`` replaced with ``platform``.
-* Province JSONB filter uses the native PostgreSQL ``@>`` containment operator
-  (``Submission.geo_location.contains({"province": province})``) instead of
-  the slower ``.astext ==`` cast approach.
+* Province filter matches both legacy storage shapes (plain string or list
+  of term dicts), case-insensitively; see ``_province_filter``.
 * ``new_submission``, ``update_new_submission``, ``delete``, and the bulk-upload
   endpoint are protected by ``Depends(RequirePermission(...))``, which checks
   authentication (``Authorize``) and an RBAC permission for the current tenant.
@@ -31,6 +30,7 @@ Changelog vs. previous version
 from __future__ import annotations
 
 import ast
+import json
 from collections import Counter, defaultdict
 import re
 import traceback
@@ -38,16 +38,17 @@ import uuid as uuid_lib
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, Union
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, Form
 from openpyxl import load_workbook
-from sqlalchemy import and_, exists, func, or_
+from sqlalchemy import Text, and_, cast, exists, func, or_, true
 from sqlalchemy.orm import Query as SAQuery, Session
 
-from nccrd.api.lib.auth import Authorized, OptionalAuthorize
-from nccrd.api.lib.permissions import RequirePermission
+from nccrd.api.lib.auth import Authorize, Authorized, OptionalAuthorize
+from nccrd.api.lib.permissions import RequirePermission, user_has_permission
+from nccrd.api.lib.upload_template import build_upload_template
 from nccrd.api.lib.tenant import get_current_tenant
 from nccrd.api.models import (
     ProgressReportResponse,
@@ -57,6 +58,7 @@ from nccrd.api.models import (
     SubmissionUpdate,
 )
 from nccrd.api.models.submission import (
+    ReviewDecision,
     AdaptationCreate,
     MitigationCreate,
     GeoLocationSchema,
@@ -277,12 +279,16 @@ def _check_not_modified_since(db: Session, submission: Submission, expected: Opt
 def _province_filter(province: str):
     """
     Match ``province`` in ``geo_location``, which holds it either as a plain
-    string or as a list of ``{"term": ...}`` dicts. Both branches use the JSONB
-    ``@>`` containment operator.
+    string or as a list of ``{"term": ...}`` dicts. Case-insensitive, like the
+    other filters: the region table spells "Kwazulu-Natal" while most rows say
+    "KwaZulu-Natal". A list is matched on its JSONB text, whose canonical form
+    always writes a member as ``"term": "<value>"``.
     """
+    p = province.strip().lower()
+    value = Submission.geo_location["province"]
     return or_(
-        Submission.geo_location.contains({"province": province}),
-        Submission.geo_location.contains({"province": [{"term": province}]}),
+        func.lower(value.astext) == p,
+        func.lower(cast(value, Text)).contains(json.dumps({"term": p}, ensure_ascii=False)[1:-1], autoescape=True),
     )
 
 
@@ -310,11 +316,14 @@ def _get_valid_vocabulary_terms(db: Session) -> Set[str]:
 def _parse_sheet_rows(
         sheet: Any,
         column_map: Dict[str, str],
-) -> List[Dict[str, Any]]:
+) -> List[Tuple[int, Dict[str, Any]]]:
     """
     Parse a worksheet where the first row contains column headers.
 
-    Returns a list of dicts mapping schema field names to cell values.
+    Returns (Excel row number, row dict) pairs, the dict mapping schema field
+    names to cell values. The row number is what ties a project's General row
+    to its Adaptation / Mitigation rows, so blank rows (e.g. no adaptation
+    details for a mitigation-only project) never shift later projects.
     Headers not present in ``column_map`` are silently ignored.
     """
     rows_iter = sheet.iter_rows(values_only=True)
@@ -334,8 +343,8 @@ def _parse_sheet_rows(
         if header_str in column_map:
             indexed_columns[col_idx] = column_map[header_str]
 
-    parsed_rows: List[Dict[str, Any]] = []
-    for row in rows_iter:
+    parsed_rows: List[Tuple[int, Dict[str, Any]]] = []
+    for excel_row, row in enumerate(rows_iter, start=2):
         # Skip fully empty rows.
         if all(cell is None for cell in row):
             continue
@@ -345,7 +354,7 @@ def _parse_sheet_rows(
             if cell_value is not None:
                 row_data[field_name] = cell_value
         if row_data:
-            parsed_rows.append(row_data)
+            parsed_rows.append((excel_row, row_data))
 
     return parsed_rows
 
@@ -410,6 +419,51 @@ def _build_geo_location(row_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+#: Permission that lets a user review submissions (accept / not accept) and
+#: see unpublished ones. Held by maintainer, tenant-admin, admin, sysadmin.
+REVIEW_PERMISSION = "validate-submission"
+
+#: Statuses a reviewer can set. Legacy rows also hold "Not Accepted"; all
+#: comparisons are case-insensitive.
+ACCEPTED, NOT_ACCEPTED, PENDING = "Accepted", "Not accepted", "Pending"
+
+_status = func.lower(func.trim(func.coalesce(Submission.submission_status, PENDING)))
+
+#: review_status value -> condition. Only "published" is public; the rest are
+#: the reviewer's queue tabs (or the owner's own, with ``mine``).
+REVIEW_STATUS_CONDITIONS = {
+    "published": and_(Submission.issubmitted.is_(True), _status == ACCEPTED.lower()),
+    "awaiting_review": and_(Submission.issubmitted.is_(True), _status == PENDING.lower()),
+    "not_accepted": _status == NOT_ACCEPTED.lower(),
+    # Never submitted (incl. the odd legacy row marked Accepted but unsubmitted),
+    # so the four tabs split every submission exactly once.
+    "draft": and_(Submission.issubmitted.isnot(True), _status != NOT_ACCEPTED.lower()),
+    "all": true(),
+}
+
+
+#: Curators: edit anyone's submissions, and their edits keep the review
+#: status. Holding any one of these is enough; the last is for people who
+#: capture projects on other people's behalf.
+CURATOR_PERMISSIONS = ("update-submission", REVIEW_PERMISSION, "change-submission-owner")
+
+#: Fields an edit never changes, even if sent: review status goes through
+#: POST /{id}/review, ownership and audit columns are set by the server.
+_PROTECTED_FIELDS = {
+    "submission_status", "submission_comments", "issubmitted", "createdby", "createdate",
+    "updatedate", "updatedby", "deletedby", "deletedate", "deleted",
+}
+
+
+def is_curator(db: Session, user_id: int, tenant: Tenant) -> bool:
+    return any(user_has_permission(db, user_id, p, tenant.id) for p in CURATOR_PERMISSIONS)
+
+
+def is_published(submission: Submission) -> bool:
+    """The Python twin of ``REVIEW_STATUS_CONDITIONS["published"]``."""
+    return bool(submission.issubmitted) and (submission.submission_status or "").strip().lower() == ACCEPTED.lower()
+
+
 class SubmissionFilters:
     """
     Query parameters shared by every endpoint that lists submissions (the
@@ -424,6 +478,7 @@ class SubmissionFilters:
         implementation_organization: Optional[str] = None,
         funding_organization: Optional[str] = None,
         funding_type: Optional[str] = None,
+        estimated_budget_cost: Optional[str] = None,
         submission_status: Optional[str] = None,
         research: Optional[str] = None,
         # Adaptation facet filters.
@@ -431,6 +486,7 @@ class SubmissionFilters:
         adaptation_national_policy: Optional[str] = None,
         adaptation_hazard: Optional[str] = None,
         adaptation_climate_impact: Optional[str] = None,
+        adaptation_regional_policy: Optional[str] = None,
         # Mitigation facet filters.
         mitigation_sector: Optional[str] = None,
         mitigation_subsector: Optional[str] = None,
@@ -442,21 +498,29 @@ class SubmissionFilters:
         mitigation_social_co_benefit: Optional[str] = None,
         mitigation_economic_co_benefit: Optional[str] = None,
         mitigation_carbon_credit: Optional[str] = None,
+        mitigation_regional_policy: Optional[str] = None,
         # Geographic / type filters.
         province: Optional[str] = None,
         intervention_measurement: Optional[str] = None,
         # Full-text search.
         q: Optional[str] = None,
-            # Only the caller's own submissions (requires login).
+            # Only the caller's own submissions, in any review status (requires login).
             mine: bool = False,
+            # Which review status to list. Everyone sees "published" (submitted
+            # and Accepted) by default; anything else is for reviewers, or for
+            # the owner together with ``mine``.
+            review_status: Optional[Literal["published", "awaiting_review", "not_accepted", "draft", "all"]] = None,
             auth: Optional[Authorized] = Depends(OptionalAuthorize()),
+            db: Session = Depends(get_db),
+            tenant: Tenant = Depends(get_current_tenant),
     ):
-        self.__dict__.update({k: v for k, v in locals().items() if k not in ("self", "auth")})
+        self.__dict__.update({k: v for k, v in locals().items() if k not in ("self", "auth", "db", "tenant")})
         self.user_id = auth.internal_user_id if auth else None
+        self.is_reviewer = bool(auth) and user_has_permission(db, auth.internal_user_id, REVIEW_PERMISSION, tenant.id)
 
     def as_dict(self) -> Dict[str, Any]:
         """The filters actually set, e.g. for logging what an export contained."""
-        return {k: v for k, v in vars(self).items() if v and k != "user_id"}
+        return {k: v for k, v in vars(self).items() if v and k not in ("user_id", "is_reviewer")}
 
 
 def filtered_submissions(db: Session, tenant: Tenant, f: SubmissionFilters) -> SAQuery:
@@ -470,10 +534,19 @@ def filtered_submissions(db: Session, tenant: Tenant, f: SubmissionFilters) -> S
     query = db.query(Submission).filter(Submission.deleted.isnot(True))
     query = _scope_to_tenant(query, tenant)
 
+    # Visibility: the public sees published projects only. The owner sees all
+    # of their own (``mine``); reviewers can list any review status.
     if f.mine:
         if f.user_id is None:
             raise HTTPException(status_code=401, detail="Log in to see your own submissions.")
         query = query.filter(Submission.createdby == f.user_id)
+        if f.review_status:
+            query = query.filter(REVIEW_STATUS_CONDITIONS[f.review_status])
+    else:
+        status = f.review_status or "published"
+        if status != "published" and not f.is_reviewer:
+            raise HTTPException(status_code=403, detail="Only reviewers can list unpublished submissions.")
+        query = query.filter(REVIEW_STATUS_CONDITIONS[status])
 
     if f.submission_id:
         query = query.filter(Submission.id == f.submission_id)
@@ -485,6 +558,8 @@ def filtered_submissions(db: Session, tenant: Tenant, f: SubmissionFilters) -> S
         query = query.filter(_term_filter(Submission.funding_organization, f.funding_organization))
     if f.funding_type:
         query = query.filter(_term_filter(Submission.funding_type, f.funding_type))
+    if f.estimated_budget_cost:
+        query = query.filter(_term_filter(Submission.estimated_budget_cost, f.estimated_budget_cost))
     if f.submission_status:
         query = query.filter(_term_filter(Submission.submission_status, f.submission_status))
     if f.research:
@@ -507,6 +582,7 @@ def filtered_submissions(db: Session, tenant: Tenant, f: SubmissionFilters) -> S
         f.adaptation_national_policy,
         f.adaptation_hazard,
         f.adaptation_climate_impact,
+        f.adaptation_regional_policy,
     ]
     if any(adaptation_filters):
         query = query.join(Adaptation, Adaptation.submission_id == Submission.id)
@@ -518,6 +594,8 @@ def filtered_submissions(db: Session, tenant: Tenant, f: SubmissionFilters) -> S
             query = query.filter(_term_filter(Adaptation.hazard, f.adaptation_hazard))
         if f.adaptation_climate_impact:
             query = query.filter(_term_filter(Adaptation.climate_impact, f.adaptation_climate_impact))
+        if f.adaptation_regional_policy:
+            query = query.filter(_term_filter(Adaptation.provincial_municipal, f.adaptation_regional_policy))
 
     # ── Mitigation join + filters ─────────────────────────────────────────────
     mitigation_filters = [
@@ -531,6 +609,7 @@ def filtered_submissions(db: Session, tenant: Tenant, f: SubmissionFilters) -> S
         f.mitigation_social_co_benefit,
         f.mitigation_economic_co_benefit,
         f.mitigation_carbon_credit,
+        f.mitigation_regional_policy,
     ]
     if any(mitigation_filters):
         query = query.join(Mitigation, Mitigation.submission_id == Submission.id)
@@ -560,6 +639,8 @@ def filtered_submissions(db: Session, tenant: Tenant, f: SubmissionFilters) -> S
             )
         if f.mitigation_carbon_credit:
             query = query.filter(_term_filter(Mitigation.carbon_credit, f.mitigation_carbon_credit))
+        if f.mitigation_regional_policy:
+            query = query.filter(_term_filter(Mitigation.provincial_municipal, f.mitigation_regional_policy))
 
     # ── Full-text title search ────────────────────────────────────────────────
     if f.q:
@@ -602,12 +683,31 @@ def read_submission(
         submission_uuid: UUID,
         db: Session = Depends(get_db),
         tenant: Tenant = Depends(get_current_tenant),
+        auth: Optional[Authorized] = Depends(OptionalAuthorize()),
 ) -> Submission:
-    """Fetch one submission by UUID and attach the relevant child records."""
-    query = db.query(Submission).filter(Submission.id == submission_uuid)
+    """
+    Fetch one submission by UUID and attach the relevant child records.
+
+    Published submissions are public. An unpublished one (draft, awaiting
+    review, not accepted) is visible only to its owner and to reviewers;
+    for anyone else it reads as not found, so its existence isn't revealed.
+    """
+    query = db.query(Submission).filter(Submission.id == submission_uuid, Submission.deleted.isnot(True))
     submission = _scope_to_tenant(query, tenant).first()
+    if submission and not is_published(submission):
+        uid = auth.internal_user_id if auth else None
+        if uid is None or (
+            submission.createdby != uid and not user_has_permission(db, uid, REVIEW_PERMISSION, tenant.id)
+        ):
+            submission = None
     if not submission:
         raise HTTPException(status_code=404, detail="Submission not found.")
+
+    reviewer = (
+        db.query(User.name).filter(User.id == submission.submission_status_updated_by).scalar()
+        if submission.submission_status_updated_by else None
+    )
+    submission.reviewed_by = reviewer
 
     mitigation = (
         db.query(Mitigation).filter(Mitigation.submission_id == submission.id).first()
@@ -732,20 +832,31 @@ def update_submission(
         submission_uuid: UUID,
         update_data: SubmissionUpdate,
         db: Session = Depends(get_db),
-        auth: Authorized = Depends(RequirePermission("update-submission")),
+        auth: Authorized = Depends(Authorize()),
+        tenant: Tenant = Depends(get_current_tenant),
 ) -> Submission:
     """
     Update an existing submission.  Nested Mitigation / Adaptation records are
     created, updated, or deleted based on the new ``intervention_measurement``
     value (if supplied).
+
+    Owners may edit their own submissions; curators (``CURATOR_PERMISSIONS``)
+    may edit anyone's. An owner's edit sends the submission back to review
+    (Pending, hidden from the public until accepted again); a curator's edit
+    keeps its review status.
     """
-    submission = (
-        db.query(Submission).filter(Submission.id == submission_uuid).first()
-    )
+    query = db.query(Submission).filter(Submission.id == submission_uuid, Submission.deleted.isnot(True))
+    submission = _scope_to_tenant(query, tenant).first()
     if not submission:
         raise HTTPException(status_code=404, detail="Submission not found.")
 
+    curator = is_curator(db, auth.internal_user_id, tenant)
+    if not curator and submission.createdby != auth.internal_user_id:
+        raise HTTPException(status_code=403, detail="You can only edit your own submissions.")
+
     data = update_data.dict(exclude_unset=True)
+    for field in _PROTECTED_FIELDS:
+        data.pop(field, None)
 
     if "expected_updatedate" in data:
         _check_not_modified_since(db, submission, data.pop("expected_updatedate"))
@@ -770,6 +881,10 @@ def update_submission(
 
     submission.updatedby = auth.internal_user_id
     submission.updatedate = datetime.utcnow()
+    if not curator:
+        # An owner's change hasn't been checked yet: back to the review queue.
+        submission.issubmitted = True
+        submission.submission_status = PENDING
 
     # ── Reconcile child records ───────────────────────────────────────────────
 
@@ -794,6 +909,75 @@ def update_submission(
     db.commit()
     db.refresh(submission)
     return submission
+
+
+@router.post(
+    "/{submission_uuid}/review",
+    summary="Accept a submission (publish it) or mark it not accepted, with comments.",
+)
+def review_submission(
+        submission_uuid: UUID,
+        body: ReviewDecision,
+        db: Session = Depends(get_db),
+        tenant: Tenant = Depends(get_current_tenant),
+        auth: Authorized = Depends(RequirePermission(REVIEW_PERMISSION)),
+) -> Dict[str, Any]:
+    """
+    Record a reviewer's decision. Accepting publishes the submission (it is
+    marked submitted, so an imported or draft record can be accepted too).
+    Not accepting needs a reason, shown to the submitter on the project page.
+    The edit-conflict ``updatedate`` is left alone: a decision isn't an edit.
+    """
+    query = db.query(Submission).filter(Submission.id == submission_uuid, Submission.deleted.isnot(True))
+    submission = _scope_to_tenant(query, tenant).first()
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found.")
+
+    comments = (body.comments or "").strip() or None
+    if body.decision == NOT_ACCEPTED and not comments:
+        raise HTTPException(status_code=422, detail="Give a reason so the submitter knows what to fix.")
+
+    submission.submission_status = body.decision
+    submission.submission_comments = comments
+    submission.submission_status_updated_by = auth.internal_user_id
+    if body.decision == ACCEPTED:
+        submission.issubmitted = True
+    db.commit()
+    return {
+        "id": str(submission.id),
+        "submission_status": submission.submission_status,
+        "submission_comments": submission.submission_comments,
+        "published": is_published(submission),
+    }
+
+
+@router.get(
+    "/upload_template",
+    summary="Download the offline-submission workbook (one project per row).",
+)
+def upload_template(db: Session = Depends(get_db)) -> Response:
+    """
+    The workbook accepted by the bulk upload, with dropdown lists from the
+    current vocabulary. Public, like the legacy site's offline submission.
+    """
+    return Response(
+        content=build_upload_template(db, GENERAL_COLUMN_MAP, ADAPTATION_COLUMN_MAP, MITIGATION_COLUMN_MAP),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="nccrd-submission-template.xlsx"'},
+    )
+
+
+@router.get(
+    "/review/counts",
+    summary="Number of submissions in each review status (reviewers only).",
+)
+def review_counts(
+        db: Session = Depends(get_db),
+        tenant: Tenant = Depends(get_current_tenant),
+        auth: Authorized = Depends(RequirePermission(REVIEW_PERMISSION)),
+) -> Dict[str, int]:
+    base = _scope_to_tenant(db.query(Submission).filter(Submission.deleted.isnot(True)), tenant)
+    return {status: base.filter(condition).count() for status, condition in REVIEW_STATUS_CONDITIONS.items()}
 
 
 @router.delete(
@@ -896,11 +1080,13 @@ async def create_submission_upload_xlsx(
 
     **Sheet: "General project details"**
     Row 1 contains column headers matching ``GENERAL_COLUMN_MAP`` keys.
-    Each subsequent row represents one submission.
+    Each subsequent row represents one submission. GET /upload_template
+    serves a ready-made workbook with these sheets and dropdown lists.
 
     **Sheet: "Adaptation details"** (optional — included when any row has
     ``intervention_measurement`` of "Adaptation" or "Cross Cutting").
-    Rows must align with "General project details" by row position (1:1 mapping).
+    A project's details are on the same Excel row number as its General row
+    (blank rows are fine and never shift later projects).
 
     **Sheet: "Mitigation details"** (optional — same as above for Mitigation).
 
@@ -926,7 +1112,7 @@ async def create_submission_upload_xlsx(
         )
 
     # ── Parse general rows ────────────────────────────────────────────────────
-    general_rows: List[Dict[str, Any]] = _parse_sheet_rows(
+    general_rows: List[Tuple[int, Dict[str, Any]]] = _parse_sheet_rows(
         wb["General project details"], GENERAL_COLUMN_MAP
     )
     if not general_rows:
@@ -936,12 +1122,13 @@ async def create_submission_upload_xlsx(
         )
 
     # ── Parse optional adaptation / mitigation sheets ─────────────────────────
-    adaptation_rows: List[Dict[str, Any]] = (
+    # Keyed by Excel row number: row N of each sheet is the same project.
+    adaptation_rows: Dict[int, Dict[str, Any]] = dict(
         _parse_sheet_rows(wb["Adaptation details"], ADAPTATION_COLUMN_MAP)
         if "Adaptation details" in wb.sheetnames
         else []
     )
-    mitigation_rows: List[Dict[str, Any]] = (
+    mitigation_rows: Dict[int, Dict[str, Any]] = dict(
         _parse_sheet_rows(wb["Mitigation details"], MITIGATION_COLUMN_MAP)
         if "Mitigation details" in wb.sheetnames
         else []
@@ -954,7 +1141,7 @@ async def create_submission_upload_xlsx(
     validation_errors: List[Dict[str, Any]] = []
     submissions_to_create: List[SubmissionCreate] = []
 
-    for row_idx, general_row in enumerate(general_rows, start=2):  # start=2 → Excel row number.
+    for row_idx, general_row in general_rows:  # row_idx is the Excel row number.
         # Extract and build geo_location.
         geo_dict = _region_codes_to_names(db, _build_geo_location(general_row))
         if geo_dict:
@@ -974,14 +1161,9 @@ async def create_submission_upload_xlsx(
             except (ValueError, TypeError):
                 general_row.pop("funding_amount")
 
-        # Attach child payloads if available (aligned by row position).
-        data_row_idx = row_idx - 2  # 0-based index into adaptation/mitigation rows.
-        adap_data: Optional[Dict[str, Any]] = (
-            adaptation_rows[data_row_idx] if data_row_idx < len(adaptation_rows) else None
-        )
-        mit_data: Optional[Dict[str, Any]] = (
-            mitigation_rows[data_row_idx] if data_row_idx < len(mitigation_rows) else None
-        )
+        # Attach child payloads from the same Excel row of the detail sheets.
+        adap_data: Optional[Dict[str, Any]] = adaptation_rows.get(row_idx)
+        mit_data: Optional[Dict[str, Any]] = mitigation_rows.get(row_idx)
 
         if adap_data:
             general_row["adaptation_data"] = adap_data
@@ -1108,14 +1290,15 @@ def get_submission_facets(
     Each facet is a sorted list of plain terms, flattened out of the legacy
     storage shapes by ``_vocab_terms`` so every option round-trips through the
     matching ``list_submission`` filter. Values are drawn only from the
-    non-deleted submissions this tenant can see, so no option returns nothing.
+    published submissions this tenant shows, so no option returns nothing.
     """
     def distinct(column) -> List[str]:
         query = db.query(column, func.count())
         model = getattr(column, "class_", Submission)  # JSONB paths have no class_
         if model is not Submission:
             query = query.join(Submission, Submission.id == model.submission_id)
-        query = _scope_to_tenant(query.filter(Submission.deleted.isnot(True)), tenant)
+        query = query.filter(Submission.deleted.isnot(True), REVIEW_STATUS_CONDITIONS["published"])
+        query = _scope_to_tenant(query, tenant)
         return _distinct_terms(query.group_by(column))
 
     return {
@@ -1123,6 +1306,7 @@ def get_submission_facets(
         "implementation_organization": distinct(Submission.implementation_organization),
         "funding_organization": distinct(Submission.funding_organization),
         "funding_type": distinct(Submission.funding_type),
+        "estimated_budget_cost": distinct(Submission.estimated_budget_cost),
         "submission_status": distinct(Submission.submission_status),
         "research": distinct(Submission.research),
         "province": distinct(Submission.geo_location["province"]),
@@ -1130,6 +1314,7 @@ def get_submission_facets(
         "adaptation_national_policy": distinct(Adaptation.national_policy),
         "adaptation_hazard": distinct(Adaptation.hazard),
         "adaptation_climate_impact": distinct(Adaptation.climate_impact),
+        "adaptation_regional_policy": distinct(Adaptation.provincial_municipal),
         "mitigation_sector": distinct(Mitigation.sector),
         "mitigation_subsector": distinct(Mitigation.subsector),
         "mitigation_project_type": distinct(Mitigation.project_type),
@@ -1140,6 +1325,7 @@ def get_submission_facets(
         "mitigation_social_co_benefit": distinct(Mitigation.social_co_benefit),
         "mitigation_economic_co_benefit": distinct(Mitigation.economic_co_benefit),
         "mitigation_carbon_credit": distinct(Mitigation.carbon_credit),
+        "mitigation_regional_policy": distinct(Mitigation.provincial_municipal),
     }
 
 

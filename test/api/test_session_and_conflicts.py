@@ -5,13 +5,25 @@ silently overwrite each other's edits.
 from datetime import datetime, timedelta, timezone
 
 import jwt
+import pytest
 
 from nccrd.config import nccrd_config
 from nccrd.db.models import Submission
+from nccrd.db.models.rbac import Tenant
 from test import TestSession
-from test.factories import SubmissionFactory
+from test.factories import FactorySession, SubmissionFactory
 
 LOADED_AT = datetime(2026, 9, 30, 8, 0, 0, 123456)
+
+
+@pytest.fixture(autouse=True)
+def tenant():
+    """A site that shows projects not linked to any tenant, like the real ones."""
+    FactorySession.add(Tenant(
+        hostname='test.nccrd.localhost', title='Test Tenant',
+        is_default=True, include_unbounded_submissions=True,
+    ))
+    FactorySession.commit()
 
 
 def _expired_token(user_id: int) -> str:
