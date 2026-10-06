@@ -128,7 +128,9 @@ def _authorize_request(request: Request, db: Session) -> Authorized:
     claims = _decode_token(token)
 
     user = db.query(User).filter(User.id == int(claims["sub"])).first()
-    if user is None or user.deleted:
+    # Self-registered accounts can't act until approved (login refuses them
+    # too; this also covers a token issued before a request was rejected).
+    if user is None or user.deleted or user.registration_status in ("pending", "rejected"):
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
             headers={'WWW-Authenticate': 'Bearer'},

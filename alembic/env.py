@@ -59,6 +59,16 @@ def include_object(object, name, type_, reflected, compare_to):
     return not (type_ == "index" and name in _UNMAPPED_INDEXES)
 
 
+# The app owns only the `nccrd` schema. The same database also holds the data
+# pipeline's `bronze`, `silver` and `pipeline` schemas (nccrd-build/pipeline,
+# see PIPELINE.md); without this filter, include_schemas=True makes
+# autogenerate reflect them and propose dropping every pipeline table.
+def include_name(name, type_, parent_names):
+    if type_ == "schema":
+        return name == "nccrd"
+    return True
+
+
 def run_migrations_offline() -> None:
     """Emit SQL to stdout without a live connection (offline mode)."""
     url = config.get_main_option("sqlalchemy.url")
@@ -68,6 +78,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         include_schemas=True,
+        include_name=include_name,
         include_object=include_object,
         version_table_schema="nccrd",
     )
@@ -93,6 +104,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             include_schemas=True,
+            include_name=include_name,
             include_object=include_object,
             version_table_schema="nccrd",  # Store alembic_version table inside nccrd schema.
         )

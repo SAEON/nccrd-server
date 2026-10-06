@@ -24,7 +24,7 @@ from __future__ import annotations
 import enum
 import re
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, validator
@@ -54,8 +54,18 @@ class ImplementationStatusEnum(str, enum.Enum):
 
 
 class FundingTypeEnum(str, enum.Enum):
-    """Allowed values for ``funding_type``."""
+    """
+    Allowed values for ``funding_type``: the categories used by the
+    submission form and the Gauteng register import, plus the legacy NCCRD
+    "fundingTypes" vocabulary restored from the old system (see
+    deploy/restore-budget-funding.sql). DFFE may want to settle on one list.
+    """
 
+    GOVERNMENT = "Government"
+    DOMESTIC = "Domestic"
+    INTERNATIONAL_GRANT = "International grant"
+    INTERNATIONAL_LOAN = "International loan"
+    PRIVATE = "Private"
     GRANT = "Grant"
     LOAN = "Loan"
     OWN_FUNDING = "Own Funding"
@@ -603,6 +613,8 @@ class SubmissionResponse(BaseModel):
     issubmitted: Optional[bool] = None
     research: Optional[str] = None
     data_source: Optional[str] = None
+    #: Name of the reviewer who last accepted / did not accept it (read endpoint only).
+    reviewed_by: Optional[str] = None
     createdby: Optional[int] = None
     createdate: Optional[datetime] = None
     updatedate: Optional[datetime] = None
@@ -618,3 +630,12 @@ class SubmissionResponse(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+class ReviewDecision(BaseModel):
+    """Body of POST /submission/{id}/review."""
+
+    decision: Literal["Accepted", "Not accepted"]
+    comments: Optional[str] = Field(
+        None, description="Shown to the submitter. Required when not accepting, so they know what to fix.",
+    )

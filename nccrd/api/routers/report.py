@@ -51,12 +51,36 @@ def _geo(submission: Submission) -> Dict[str, Any]:
     return submission.geo_location if isinstance(submission.geo_location, dict) else {}
 
 
-def _coordinates(submission: Submission) -> Optional[tuple]:
-    """(lat, lon) when the project has a real point; legacy rows hold [0, 0] or WKT text."""
+#: Rough bounding box of South Africa (lat, lon), to drop placeholder or
+#: mistyped points. Generous enough for every real project location.
+_SA_LAT, _SA_LON = (-35.5, -21.5), (15.5, 33.5)
+_WKT_POINT = re.compile(r"POINT\s*\(\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*\)")
+
+
+def _points(submission: Submission) -> List[tuple]:
+    """
+    The project's real locations as (lat, lon) pairs. ``coordinates`` holds
+    either a [lon, lat] pair ([0, 0] = no location) or, for legacy rows, WKT
+    text such as "GEOMETRYCOLLECTION (POINT (28.1 -26.2), POINT (...))" that
+    can list several places.
+    """
     c = _geo(submission).get("coordinates")
-    if isinstance(c, list) and len(c) == 2 and all(isinstance(v, (int, float)) for v in c) and any(c):
-        return c[1], c[0]
-    return None
+    if isinstance(c, list) and len(c) == 2 and all(isinstance(v, (int, float)) for v in c):
+        pairs = [(c[1], c[0])]
+    elif isinstance(c, str):
+        pairs = [(float(lat), float(lon)) for lon, lat in _WKT_POINT.findall(c)]
+    else:
+        pairs = []
+    return [
+        (lat, lon) for lat, lon in pairs
+        if _SA_LAT[0] <= lat <= _SA_LAT[1] and _SA_LON[0] <= lon <= _SA_LON[1]
+    ]
+
+
+def _coordinates(submission: Submission) -> Optional[tuple]:
+    """The project's first real location, (lat, lon), or None."""
+    points = _points(submission)
+    return points[0] if points else None
 
 
 def _blank(value: Any) -> bool:
@@ -89,6 +113,70 @@ def _counts(values: Iterable[Iterable[str]], top: Optional[int] = None) -> List[
     return rows
 
 
+#: Project types in their fixed display order (series of the by-type charts).
+TYPES = ["Mitigation", "Adaptation", "Cross Cutting"]
+
+#: Official "budgetRanges" vocabulary, smallest first.
+BUDGET_RANGES = [
+    "< R10k", "R10k - R50K", "R50k - R100k", "R100k - R500k", "R500k - R1m",
+    "R1m - R5m", "R5m - R10m", "R10m - R50m", "R50m - R100m", "> R100m",
+]
+
+_FINISHED = {"completed", "cancelled"}
+
+
+def _years_under_way(s: Submission, this_year: int) -> range:
+    """
+    Calendar years a project was under way: start year to end year. With no
+    end date, an unfinished project runs to this year and a finished one counts
+    in its start year only. Future years and end-before-start are clamped.
+    """
+    if not s.start_date:
+        return range(0)
+    start = s.start_date.year
+    if s.end_date:
+        end = s.end_date.year
+    elif (s.implementation_status or "").strip().lower() in _FINISHED:
+        end = start
+    else:
+        end = this_year
+    return range(start, max(start, min(end, this_year)) + 1)
+
+
+def _by_type(rows: Iterable[tuple], order: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    A category x project-type count table from (category, type) pairs, for the
+    stacked charts. Categories keep ``order`` when given (missing ones are
+    skipped), otherwise most common first; "Not specified" always goes last.
+    """
+    table: Dict[str, Counter] = {}
+    for category, project_type in rows:
+        table.setdefault(category or NOT_SPECIFIED, Counter())[project_type] += 1
+    if order:
+        labels = [c for c in order if c in table]
+    else:
+        labels = sorted((c for c in table if c != NOT_SPECIFIED), key=lambda c: -sum(table[c].values()))
+    if NOT_SPECIFIED in table and NOT_SPECIFIED not in labels:
+        labels.append(NOT_SPECIFIED)
+    return {
+        "series": TYPES,
+        "rows": [{"label": c, "values": {t: table[c][t] for t in TYPES}} for c in labels],
+    }
+
+
+def _sector_budget(records, budgets: Dict[Any, float]) -> List[Dict[str, Any]]:
+    """Recorded budget (funding_amount) summed per sector, largest first."""
+    totals: Dict[str, List[float]] = {}
+    for r in records:
+        amount = budgets.get(r.submission_id)
+        if not amount:
+            continue
+        for sector in _vocab_terms(r.sector) or [NOT_SPECIFIED]:
+            totals.setdefault(sector, []).append(amount)
+    rows = [{"label": k, "amount": sum(v), "projects": len(v)} for k, v in totals.items()]
+    return sorted(rows, key=lambda r: -r["amount"])[:TOP_N]
+
+
 @router.get("/summary", summary="Headline figures and breakdowns for the filtered projects.")
 def summary(
         filters: SubmissionFilters = Depends(),
@@ -101,6 +189,9 @@ def summary(
     amounts = [s.funding_amount for s in submissions if s.funding_amount]
 
     years = Counter(s.start_date.year for s in submissions if s.start_date)
+    this_year = date.today().year
+    type_of = {s.id: (_vocab_terms(s.intervention_measurement) or [NOT_SPECIFIED])[0] for s in submissions}
+    budgets = {s.id: s.funding_amount for s in submissions if s.funding_amount}
     return {
         "total": len(submissions),
         "by_type": _counts(_vocab_terms(s.intervention_measurement) for s in submissions),
@@ -112,6 +203,25 @@ def summary(
         "hazards": _counts((_vocab_terms(a.hazard) for a in ada), TOP_N),
         "by_start_year": [{"year": y, "count": years[y]} for y in sorted(years)],
         "start_year_unknown": sum(1 for s in submissions if not s.start_date),
+        "under_way_by_year": _by_type(
+            ((year, type_of[s.id]) for s in submissions for year in _years_under_way(s, this_year)),
+            order=list(range(1900, this_year + 1)),
+        ),
+        "under_way_unknown": sum(1 for s in submissions if not s.start_date),
+        "status_by_type": _by_type(
+            ((_vocab_terms(s.implementation_status) or [None])[0], type_of[s.id]) for s in submissions
+        ),
+        "funding_type_by_type": _by_type(
+            ((_vocab_terms(s.funding_type) or [None])[0], type_of[s.id]) for s in submissions
+        ),
+        "budget_ranges": _by_type(
+            (((_vocab_terms(s.estimated_budget_cost) or [None])[0], type_of[s.id]) for s in submissions),
+            order=BUDGET_RANGES,
+        ),
+        "sector_budget": {
+            "mitigation": _sector_budget(mit, budgets),
+            "adaptation": _sector_budget(ada, budgets),
+        },
         "funding": {
             "total_amount": sum(amounts),
             # A few very large projects dominate the total (e.g. R86bn for one
@@ -120,6 +230,31 @@ def summary(
             "projects_with_amount": len(amounts),
         },
     }
+
+
+@router.get("/locations", summary="Map points for the filtered projects.")
+def locations(
+        filters: SubmissionFilters = Depends(),
+        db: Session = Depends(get_db),
+        tenant: Tenant = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """
+    One entry per project that has a real location, with all its points, plus
+    how many projects had none (so the map can say what it leaves out).
+    """
+    projects, without = [], 0
+    for s in filtered_submissions(db, tenant, filters).all():
+        points = _points(s)
+        if not points:
+            without += 1
+            continue
+        projects.append({
+            "id": str(s.id),
+            "title": s.title,
+            "type": s.intervention_measurement,
+            "points": [[round(lat, 5), round(lon, 5)] for lat, lon in points],
+        })
+    return {"projects": projects, "without_location": without}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -291,7 +426,12 @@ def export(
     ))
     db.commit()
 
-    filename = f"nccrd-projects-{date.today().isoformat()}.{format}"
+    if filters.submission_id and len(submissions) == 1:
+        # A single project's download is named after it.
+        slug = re.sub(r"[^a-z0-9]+", "-", (submissions[0].title or "").lower()).strip("-")[:60] or "project"
+        filename = f"nccrd-{slug}.{format}"
+    else:
+        filename = f"nccrd-projects-{date.today().isoformat()}.{format}"
     return StreamingResponse(
         iter([content]),
         media_type=media_type,

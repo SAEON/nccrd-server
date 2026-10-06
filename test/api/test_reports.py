@@ -131,7 +131,57 @@ def test_form_region_codes_are_stored_as_names_and_found_by_filters(api):
     })
     assert r.status_code in (200, 201), r.text
 
-    listed = client.get('/submission/list_submission', params={'province': 'Western Cape'}).json()
+    # New submissions await review, so look in the creator's own list.
+    listed = client.get('/submission/list_submission', params={'province': 'Western Cape', 'mine': 'true'}).json()
     assert [s['title'] for s in listed] == ['Captured in the form']
     assert listed[0]['geo_location']['district'] == 'City of Cape Town'
-    assert 'Western Cape' in client.get('/submission/facets/submission').json()['province']
+
+
+def test_locations_read_both_coordinate_formats_and_skip_placeholders(client):
+    SubmissionFactory(title='pair', geo_location={'coordinates': [28.0, -26.2]})
+    SubmissionFactory(title='wkt', geo_location={
+        'coordinates': 'GEOMETRYCOLLECTION (POINT (18.68 -34.2), POINT (19.8 -30.22))'})
+    SubmissionFactory(title='placeholder', geo_location={'coordinates': [0, 0]})
+    SubmissionFactory(title='abroad', geo_location={'coordinates': [2.35, 48.85]})   # Paris: a data error
+    SubmissionFactory(title='none', geo_location=None)
+
+    r = client.get('/report/locations').json()
+    points = {p['title']: p['points'] for p in r['projects']}
+    assert points == {'pair': [[-26.2, 28.0]], 'wkt': [[-34.2, 18.68], [-30.22, 19.8]]}
+    assert r['without_location'] == 3
+
+    quality = {f['field']: f for f in client.get('/report/quality').json()['fields']}
+    assert quality['coordinates']['filled'] == 2          # the WKT project counts now
+
+
+def test_breakdowns_by_type(client):
+    from datetime import date
+    this_year = date.today().year
+    a = SubmissionFactory(intervention_measurement='Mitigation', implementation_status='Completed',
+                          start_date=datetime(2019, 5, 1), end_date=datetime(2021, 1, 1),
+                          funding_type='International grant', estimated_budget_cost='R1m - R5m', funding_amount=500.0)
+    MitigationFactory(submission_id=a.id, sector='Energy')
+    SubmissionFactory(intervention_measurement='Adaptation', implementation_status='Under Implementation',
+                      start_date=datetime(this_year - 1, 1, 1), end_date=None)                 # ongoing
+    SubmissionFactory(intervention_measurement='Adaptation', implementation_status='Completed',
+                      start_date=datetime(2020, 1, 1), end_date=None)                          # finished, no end
+    SubmissionFactory(intervention_measurement='Cross Cutting', start_date=None, estimated_budget_cost='> R100m')
+
+    s = client.get('/report/summary').json()
+    years = {r['label']: r['values'] for r in s['under_way_by_year']['rows']}
+    assert years[2019] == years[2021] == {'Mitigation': 1, 'Adaptation': 0, 'Cross Cutting': 0}
+    assert years[2020] == {'Mitigation': 1, 'Adaptation': 1, 'Cross Cutting': 0}
+    assert years[this_year]['Adaptation'] == 1 and this_year + 1 not in years
+    assert s['under_way_unknown'] == 1
+
+    assert [r['label'] for r in s['budget_ranges']['rows']] == ['R1m - R5m', '> R100m', 'Not specified']
+    funding = {r['label']: r['values'] for r in s['funding_type_by_type']['rows']}
+    assert funding['International grant']['Mitigation'] == 1
+    assert s['sector_budget']['mitigation'] == [{'label': 'Energy', 'amount': 500.0, 'projects': 1}]
+
+
+def test_single_project_export_is_named_after_it(client, projects):
+    r = client.get('/report/export', params={'submission_id': str(projects[1].id), 'format': 'csv'})
+    assert 'filename="nccrd-flood-defences.csv"' in r.headers['content-disposition']
+    rows = list(csv.reader(io.StringIO(r.content.decode('utf-8-sig'))))
+    assert [row[1] for row in rows[1:]] == ['Flood defences']

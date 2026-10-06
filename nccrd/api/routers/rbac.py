@@ -6,7 +6,7 @@ corresponding `view-*` permission; role assignment is gated by `assign-role`.
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -24,6 +24,8 @@ from nccrd.api.models import (
     UserCreateResponse,
     UserResponse,
     UserRoleTenantResponse,
+    RegistrationApproval,
+    RegistrationResponse,
 )
 from nccrd.db import get_db
 from nccrd.db.models.rbac import (
@@ -243,3 +245,72 @@ def revoke_role(
     db.delete(link)
     db.commit()
     return {"detail": "Role assignment revoked."}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Self sign-up review (POST /auth/register creates the requests)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/registrations",
+    response_model=List[RegistrationResponse],
+    summary="Account requests awaiting review (or with another status), newest first.",
+)
+def list_registrations(
+        status: Literal["pending", "approved", "rejected"] = "pending",
+        db: Session = Depends(get_db),
+        auth: Authorized = Depends(RequirePermission("assign-role")),
+) -> List[User]:
+    return (
+        db.query(User)
+        .filter(User.registration_status == status, User.deleted.isnot(True))
+        .order_by(User.created_at.desc())
+        .all()
+    )
+
+
+def _pending_registration(db: Session, user_id: int) -> User:
+    user = db.query(User).filter(User.id == user_id, User.deleted.isnot(True)).first()
+    if user is None or user.registration_status != "pending":
+        raise HTTPException(status_code=404, detail="No pending account request with that id.")
+    return user
+
+
+@router.post(
+    "/registrations/{user_id}/approve",
+    response_model=RegistrationResponse,
+    summary="Approve an account request, granting a role on the current tenant.",
+)
+def approve_registration(
+        user_id: int,
+        body: RegistrationApproval,
+        db: Session = Depends(get_db),
+        tenant: Tenant = Depends(get_current_tenant),
+        auth: Authorized = Depends(RequirePermission("assign-role")),
+) -> User:
+    user = _pending_registration(db, user_id)
+    if not db.query(Role).filter(Role.id == body.role_id).first():
+        raise HTTPException(status_code=404, detail="Role not found.")
+    db.add(UserXrefRoleXrefTenant(user_id=user.id, role_id=body.role_id, tenant_id=tenant.id))
+    user.registration_status = "approved"
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.post(
+    "/registrations/{user_id}/reject",
+    response_model=RegistrationResponse,
+    summary="Reject an account request; the account can't log in.",
+)
+def reject_registration(
+        user_id: int,
+        db: Session = Depends(get_db),
+        auth: Authorized = Depends(RequirePermission("assign-role")),
+) -> User:
+    user = _pending_registration(db, user_id)
+    user.registration_status = "rejected"
+    db.commit()
+    db.refresh(user)
+    return user

@@ -34,6 +34,11 @@ class User(Base):
     password_set_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     deleted = Column(Boolean, default=False, nullable=False)
+    # Self sign-up (POST /auth/register): "pending" until an admin approves
+    # (with a role) or rejects it. NULL for admin-created and legacy accounts.
+    registration_status = Column(String(20))
+    organisation = Column(String(500))
+    registration_note = Column(Text)
 
     role_assignments = relationship(
         "UserXrefRoleXrefTenant",

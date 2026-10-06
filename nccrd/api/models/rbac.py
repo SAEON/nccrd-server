@@ -138,3 +138,24 @@ class CurrentUserResponse(BaseModel):
 
 
 UserCreateResponse.update_forward_refs()
+
+
+class RegistrationResponse(BaseModel):
+    """A self sign-up request, for the admin's review queue."""
+
+    id: int
+    name: str
+    email: str
+    organisation: Optional[str] = None
+    registration_note: Optional[str] = None
+    registration_status: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class RegistrationApproval(BaseModel):
+    """Role to grant (on the current tenant) when approving a sign-up."""
+
+    role_id: int
