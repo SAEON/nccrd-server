@@ -4,8 +4,12 @@ The legacy migration squashed funding types through a fixed map, turning the
 old system's "fundingTypes" vocabulary (Government, Domestic, International
 grant, International loan, Private) into NULL. Restoring them
 (deploy/restore-budget-funding.sql) needs the column's check constraint, which
-sa.Enum(native_enum=False) created with only the form's six values, to accept
+the pre-Alembic schema created with only the form's six values, to accept
 them too. Mirrors nccrd.db.models.submission.FundingType.
+
+Only databases built before Alembic have that constraint. 0001 creates none
+(sa.Enum(native_enum=False) doesn't add one), so on a database built by the
+migrations there is nothing to widen and this does nothing.
 
 Downgrading fails while any row still holds one of the legacy values.
 
@@ -14,6 +18,7 @@ Revises: 0002
 """
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0003"
@@ -26,6 +31,12 @@ LEGACY_TYPES = ["Government", "Domestic", "International grant", "International 
 
 
 def _replace_constraint(values) -> None:
+    exists = op.get_bind().execute(sa.text(
+        "SELECT 1 FROM pg_constraint WHERE conname = 'ck_submission_funding_type' "
+        "AND conrelid = 'nccrd.submission'::regclass"
+    )).scalar()
+    if not exists:
+        return
     op.drop_constraint("ck_submission_funding_type", "submission", schema="nccrd", type_="check")
     allowed = ", ".join("'" + v.replace("'", "''") + "'" for v in values)
     op.create_check_constraint(
