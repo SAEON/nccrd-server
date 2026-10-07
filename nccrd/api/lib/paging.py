@@ -3,7 +3,6 @@ from typing import Callable, Generic, List, TypeVar
 
 from fastapi import HTTPException, Query
 from pydantic import BaseModel
-from pydantic.generics import GenericModel
 from sqlalchemy import func, select, text
 from sqlalchemy.engine import Row
 from sqlalchemy.exc import CompileError
@@ -15,7 +14,7 @@ from nccrd.db import Base, Session
 ModelT = TypeVar('ModelT', bound=BaseModel)
 
 
-class Page(GenericModel, Generic[ModelT]):
+class Page(BaseModel, Generic[ModelT]):
     items: List[ModelT]
     total: int
     page: int

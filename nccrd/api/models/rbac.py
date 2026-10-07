@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import ConfigDict, BaseModel, Field
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -30,16 +30,14 @@ class UserCreate(BaseModel):
     email: str = Field(..., description="Unique email address.")
     role_id: Optional[int] = Field(None, description="nccrd.role.id to grant immediately. Requires tenant_id.")
     tenant_id: Optional[int] = Field(None, description="nccrd.tenant.id the role applies to. Requires role_id.")
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "name": "Jane Smith",
-                "email": "jane.smith@example.org",
-                "role_id": 8,
-                "tenant_id": 6,
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "name": "Jane Smith",
+            "email": "jane.smith@example.org",
+            "role_id": 8,
+            "tenant_id": 6,
         }
+    })
 
 
 class UserResponse(BaseModel):
@@ -50,9 +48,7 @@ class UserResponse(BaseModel):
     saeon_id: Optional[str] = None
     created_at: datetime
     deleted: bool
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserCreateResponse(BaseModel):
@@ -74,18 +70,14 @@ class RoleResponse(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PermissionResponse(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -100,9 +92,7 @@ class TenantResponse(BaseModel):
     contact_email: Optional[str] = None
     is_default: bool
     include_unbounded_submissions: bool
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserRoleTenantResponse(BaseModel):
@@ -112,9 +102,7 @@ class UserRoleTenantResponse(BaseModel):
     user_id: int
     role_id: int
     tenant_id: int
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RoleAssignmentCreate(BaseModel):
@@ -122,9 +110,7 @@ class RoleAssignmentCreate(BaseModel):
 
     role_id: int = Field(..., description="nccrd.role.id to grant.")
     tenant_id: int = Field(..., description="nccrd.tenant.id the role applies to.")
-
-    class Config:
-        schema_extra = {"example": {"role_id": 8, "tenant_id": 6}}
+    model_config = ConfigDict(json_schema_extra={"example": {"role_id": 8, "tenant_id": 6}})
 
 
 class CurrentUserResponse(BaseModel):
@@ -137,7 +123,7 @@ class CurrentUserResponse(BaseModel):
     permissions: List[str]
 
 
-UserCreateResponse.update_forward_refs()
+UserCreateResponse.model_rebuild()
 
 
 class RegistrationResponse(BaseModel):
@@ -150,9 +136,7 @@ class RegistrationResponse(BaseModel):
     registration_note: Optional[str] = None
     registration_status: Optional[str] = None
     created_at: datetime
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RegistrationApproval(BaseModel):

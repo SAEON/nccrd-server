@@ -76,8 +76,8 @@ def get_current_user(
         ]
 
     return CurrentUserResponse(
-        user=UserResponse.from_orm(user),
-        tenant=TenantResponse.from_orm(tenant),
+        user=UserResponse.model_validate(user),
+        tenant=TenantResponse.model_validate(tenant),
         roles=[r.name for r in roles],
         permissions=permissions,
     )
@@ -142,9 +142,9 @@ def create_user(
         db.refresh(link)
 
     return UserCreateResponse(
-        user=UserResponse.from_orm(user),
+        user=UserResponse.model_validate(user),
         temp_password=temp_password,
-        role_assignment=UserRoleTenantResponse.from_orm(link) if link is not None else None,
+        role_assignment=UserRoleTenantResponse.model_validate(link) if link is not None else None,
     )
 
 
