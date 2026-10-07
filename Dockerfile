@@ -45,9 +45,10 @@ RUN groupadd --gid 1000 app \
 # use urllib instead of adding a curl install just for this. /health is
 # unauthenticated and does no DB round-trip, so this only proves the ASGI
 # app itself is accepting requests, not that the database is reachable.
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:2022/health', timeout=2)" || exit 1
 
 USER app
 
-CMD ["uvicorn", "nccrd.api:app", "--host", "0.0.0.0", "--port", "2022", "--workers", "4", "--log-config", "logging.json"]
+# Migrates the database to head, then runs uvicorn (see the script).
+CMD ["sh", "scripts/start.sh"]
