@@ -124,3 +124,21 @@ migration, not before.
   independently confirmed here. Worth a follow-up check once repo/token
   access is available, to make sure nothing GitHub-specific (e.g. a
   GitHub Actions-only advisory) was missed.
+
+## Follow-up — 2026-10-07
+
+GitHub reported 5 open Dependabot alerts on `main` (2 high, 2 moderate,
+1 low). `pip-audit -r requirements.txt` found 2 packages:
+
+- **`pyjwt` 2.14.0 → 2.15.0** (PYSEC-2026-4141, CVE-2026-102275). Both are
+  in JWK handling: `PyJWKClient`'s pre-verification payload parsing, and
+  OKP private JWKs whose public key doesn't match the private key. This
+  app uses neither: it signs and checks HS256 tokens with plain
+  `jwt.encode`/`jwt.decode`. Upgraded anyway, since it's free and closes
+  the latent risk. On Python 3.10, 2.15.0 needs `typing-extensions>=4`,
+  which is already pinned (4.12.2). The full test suite passes.
+- **`starlette` 0.50.0**: the same 5 advisories as in "Blocked" above. They
+  still need `starlette>=1.0`, so they still wait for the Pydantic v2
+  migration.
+
+After this, `pip-audit` reports only the blocked `starlette` advisories.
