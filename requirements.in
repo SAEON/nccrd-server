@@ -5,7 +5,7 @@ starlette==0.50.0  # highest version fastapi==0.125.0's own pin (starlette<0.51.
 pydantic<2  # nccrd/config.py and nccrd/api/models/*.py use Pydantic v1 syntax (BaseSettings, orm_mode, .from_orm()) — do not let this drift to v2 via a bare pip-compile --upgrade.
 alembic
 pyjwt>=2.15.0  # patches several published CVEs; none were exploitable via how this app calls the library (plain jwt.encode/decode with an explicit algorithms=[...] allow-list, no PyJWKClient/JWK usage) but the upgrade is free and closes the latent risk — see DEPENDENCY_AUDIT.md.
-passlib[bcrypt]
+bcrypt>=4.2  # password hashing (passlib, used before, is unmaintained)
 python-dotenv  # migrate/systemdata.py imports this directly
 
 # testing
