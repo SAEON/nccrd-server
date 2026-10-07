@@ -1,0 +1,11 @@
+# Test and development tools, installed on top of requirements.txt (CI's test
+# job and local development). They don't go into the Docker image.
+#   pip-compile requirements-dev.in    # pins stay consistent with requirements.txt
+-c requirements.txt
+
+pytest
+coverage
+sqlalchemy_utils
+factory-boy
+faker
+httpx  # FastAPI's TestClient

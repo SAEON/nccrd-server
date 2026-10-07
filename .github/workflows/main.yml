@@ -73,7 +73,7 @@ jobs:
         working-directory: nccrd-server
         run: |
           python -m pip install --upgrade pip pip-tools
-          pip-sync
+          pip-sync requirements.txt requirements-dev.txt  # the app's dependencies plus the test tools
           
       - name: Set up testing environment
         working-directory: nccrd-server/test
