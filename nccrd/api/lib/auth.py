@@ -4,11 +4,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import bcrypt
 import jwt
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.status import HTTP_401_UNAUTHORIZED
@@ -36,7 +36,14 @@ _BYPASS_AUTH = os.getenv("NCCRD_BYPASS_AUTH", "0") == "1"
 _DEV_USER_EMAIL = "n.bingani@saeon.nrf.ac.za"
 _DEV_USER_NAME = "N. Bingani"
 
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+#: bcrypt only uses the first 72 bytes of a password. passlib, used before,
+#: truncated longer ones silently; newer bcrypt releases reject them instead,
+#: so truncating here keeps every existing hash verifiable.
+_BCRYPT_MAX_BYTES = 72
+
+
+def _secret(plain: str) -> bytes:
+    return plain.encode("utf-8")[:_BCRYPT_MAX_BYTES]
 
 
 @dataclass
@@ -59,11 +66,15 @@ def generate_temp_password() -> str:
 
 
 def hash_password(plain: str) -> str:
-    return _pwd_context.hash(plain)
+    """bcrypt, 12 rounds, $2b$: the same hashes passlib produced."""
+    return bcrypt.hashpw(_secret(plain), bcrypt.gensalt(rounds=12)).decode("ascii")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return _pwd_context.verify(plain, hashed)
+    try:
+        return bcrypt.checkpw(_secret(plain), hashed.encode("ascii"))
+    except ValueError:  # not a bcrypt hash
+        return False
 
 
 def create_access_token(user: User) -> str:
