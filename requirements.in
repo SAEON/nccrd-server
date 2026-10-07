@@ -8,14 +8,6 @@ pyjwt>=2.15.0  # patches several published CVEs; none were exploitable via how t
 bcrypt>=4.2  # password hashing (passlib, used before, is unmaintained)
 python-dotenv  # migrate/systemdata.py imports this directly
 
-# testing
-pytest
-coverage
-sqlalchemy_utils
-factory-boy
-faker
-httpx
-
 # deployment
 uvicorn
 openpyxl

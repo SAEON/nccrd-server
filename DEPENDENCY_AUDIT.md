@@ -110,7 +110,9 @@ migration, not before.
 
 ## Also found, not fixed here (separate scope)
 
-- `requirements.in` doesn't separate runtime from dev/test dependencies —
+- *(Resolved 2026-10-07: test tools now live in `requirements-dev.in`/`.txt`;
+  the image installs only `requirements.txt`, 37 → 23 packages.)*
+  `requirements.in` doesn't separate runtime from dev/test dependencies —
   `pytest`, `coverage`, `factory-boy`, `faker`, `httpx` all ship in the
   production image today. Splitting this into `requirements.in` +
   `requirements-dev.in` (or an `[test]` extra) would shrink the image and
