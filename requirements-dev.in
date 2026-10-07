@@ -8,4 +8,4 @@ coverage
 sqlalchemy_utils
 factory-boy
 faker
-httpx  # FastAPI's TestClient
+httpx2  # Starlette 1.x TestClient (successor of httpx, by its author)

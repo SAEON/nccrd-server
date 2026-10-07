@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, Union
 from uuid import UUID
 
+from pydantic import ValidationError
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, Form
 from openpyxl import load_workbook
 from sqlalchemy import Text, and_, cast, exists, func, or_, true
@@ -666,10 +667,10 @@ def get_submissions_list(
     query = filtered_submissions(db, tenant, filters)
 
     # FastAPI's jsonable_encoder takes ~1 s for the full list (~3k rows);
-    # pydantic's own .json() gives identical output in ~0.3 s. Returning a
+    # pydantic's own .model_dump_json() gives identical output in ~0.3 s. Returning a
     # Response bypasses the encoder (response_model still documents the shape).
     return Response(
-        content="[" + ",".join(SubmissionModel.from_orm(r).json() for r in query.all()) + "]",
+        content="[" + ",".join(SubmissionModel.model_validate(r).model_dump_json() for r in query.all()) + "]",
         media_type="application/json",
     )
 
@@ -758,7 +759,7 @@ def create_submission(
     created automatically based on ``intervention_measurement``.
     """
     geo_dict = _region_codes_to_names(
-        db, submission.geo_location.dict(exclude_none=True) if submission.geo_location else None
+        db, submission.geo_location.model_dump(exclude_none=True) if submission.geo_location else None
     )
 
     db_submission = Submission(
@@ -854,7 +855,7 @@ def update_submission(
     if not curator and submission.createdby != auth.internal_user_id:
         raise HTTPException(status_code=403, detail="You can only edit your own submissions.")
 
-    data = update_data.dict(exclude_unset=True)
+    data = update_data.model_dump(exclude_unset=True)
     for field in _PROTECTED_FIELDS:
         data.pop(field, None)
 
@@ -867,7 +868,7 @@ def update_submission(
 
     # Convert geo_location Pydantic sub-model to dict if present.
     if "geo_location" in data and isinstance(data["geo_location"], GeoLocationSchema):
-        data["geo_location"] = _region_codes_to_names(db, data["geo_location"].dict(exclude_none=True))
+        data["geo_location"] = _region_codes_to_names(db, data["geo_location"].model_dump(exclude_none=True))
 
     new_intervention: str = (
         data.get("intervention_measurement", submission.intervention_measurement)
@@ -1186,11 +1187,15 @@ async def create_submission_upload_xlsx(
         try:
             submission_obj = SubmissionCreate(**general_row)
             submissions_to_create.append(submission_obj)
-        except Exception as pydantic_exc:
+        except ValidationError as exc:
+            # "field: message" per problem: Pydantic 2's own text adds type codes,
+            # documentation links and the whole row's values.
             validation_errors.append({
                 "row": row_idx,
-                "error": str(pydantic_exc),
+                "error": "; ".join(f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()),
             })
+        except Exception as exc:
+            validation_errors.append({"row": row_idx, "error": str(exc)})
 
     # Reject the whole batch if any errors were found.
     if validation_errors:
@@ -1210,7 +1215,7 @@ async def create_submission_upload_xlsx(
     try:
         for submission in submissions_to_create:
             geo_dict = (
-                submission.geo_location.dict(exclude_none=True)
+                submission.geo_location.model_dump(exclude_none=True)
                 if submission.geo_location
                 else None
             )

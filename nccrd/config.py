@@ -1,8 +1,15 @@
 from __future__ import annotations
 
-from typing import Dict, Type
+from typing import ClassVar, Dict, Optional, Type, Union
 
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Every settings group reads the same .env, which holds every group's variables
+#: (NCCRD_DB_*, NCCRD_*...): each ignores the ones it doesn't declare, which
+#: pydantic-settings 2 would otherwise reject. Repeated in each class below
+#: because pydantic merges config base by base: NCCRDDBConfig's second base,
+#: DBConfigMixin, would otherwise reset these to the defaults.
+_SHARED = dict(env_file='.env', extra='ignore')
 
 
 class BaseConfig(BaseSettings):
@@ -28,18 +35,19 @@ class BaseConfig(BaseSettings):
     shell commands/scripts.
     """
 
-    _subconfig: Dict[str, Type[BaseConfig] | BaseConfig] = {}
+    # A ClassVar, not a pydantic private attribute: those are themselves looked
+    # up through __getattr__, which would recurse here.
+    _subconfig: ClassVar[Dict[str, Union[Type[BaseConfig], BaseConfig]]] = {}
 
     def __getattr__(self, name) -> BaseConfig:
-        if name in self._subconfig:
-            if not isinstance(self._subconfig[name], BaseConfig):
-                self._subconfig[name] = (self._subconfig[name])()
-            return self._subconfig[name]
+        subconfig = type(self)._subconfig
+        if name in subconfig:
+            if not isinstance(subconfig[name], BaseConfig):
+                subconfig[name] = subconfig[name]()
+            return subconfig[name]
+        return super().__getattr__(name)
 
-        raise AttributeError
-
-    class Config:
-        env_file = '.env'
+    model_config = SettingsConfigDict(**_SHARED)
 
 
 class DBConfigMixin(BaseSettings):
@@ -57,15 +65,13 @@ class DBConfigMixin(BaseSettings):
 
 
 class NCCRDDBConfig(BaseConfig, DBConfigMixin):
-    class Config:
-        env_prefix = 'NCCRD_DB_'
+    model_config = SettingsConfigDict(**_SHARED, env_prefix='NCCRD_DB_')
 
 
 class NCCRDInnerConfig(BaseConfig):
-    class Config:
-        env_prefix = 'NCCRD_'
+    model_config = SettingsConfigDict(**_SHARED, env_prefix='NCCRD_')
 
-    API_URL: str = None
+    API_URL: Optional[str] = None
     JWT_SECRET: str
     JWT_ALGORITHM: str = 'HS256'
     JWT_EXPIRES_MINUTES: int = 480
@@ -81,16 +87,15 @@ class NCCRDInnerConfig(BaseConfig):
         'http://localhost:5175'
     )
 
-    _subconfig = {
+    _subconfig: ClassVar[Dict[str, Union[Type[BaseConfig], BaseConfig]]] = {
         'DB': NCCRDDBConfig,
     }
 
 
 class NCCRDRootConfig(BaseConfig):
-    class Config:
-        env_prefix = ''
+    model_config = SettingsConfigDict(**_SHARED, env_prefix='')
 
-    _subconfig = {
+    _subconfig: ClassVar[Dict[str, Union[Type[BaseConfig], BaseConfig]]] = {
         'NCCRD': NCCRDInnerConfig,
     }
 

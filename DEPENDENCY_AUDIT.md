@@ -95,6 +95,8 @@ it back with a `Range` header (confirmed `206 Partial Content`).
 
 ## Blocked — genuinely, not just deferred
 
+*(Resolved 2026-10-07 by the Pydantic v2 migration: see "Pydantic v2" below.)*
+
 **ESLint 10 / `eslint-plugin-react-hooks` v7 for the frontend had exact
 analogues in this audit.** Latest FastAPI (0.126.0+) requires
 `pydantic>=2.7`, and this project deliberately pins `pydantic<2`
@@ -144,3 +146,24 @@ GitHub reported 5 open Dependabot alerts on `main` (2 high, 2 moderate,
   migration.
 
 After this, `pip-audit` reports only the blocked `starlette` advisories.
+
+## Pydantic v2 — 2026-10-07
+
+Migrated to Pydantic 2.13 (with pydantic-settings for `nccrd/config.py`),
+FastAPI 0.142 and **Starlette 1.7**, which fixes the five Starlette
+advisories that were blocked above. `pip-audit` now finds **no known
+vulnerabilities** in `requirements.txt` or `requirements-dev.txt`.
+
+How behaviour was kept the same:
+- The test suite passes.
+- The old and new API answered all 56 read requests (lists with filters,
+  project pages of every kind, reports, regions, all vocabulary trees,
+  accounts, the pipeline page, the upload template) on the same copy of
+  the server's data. The answers were identical apart from one notation:
+  timezone-aware timestamps are written `…Z` instead of `…+00:00`. Only
+  the pipeline page has them, and browsers read both the same.
+- Validation errors (422) keep their v1 shape (`loc`, `msg`, `type`).
+  Pydantic 2 would also echo the submitted input, which can include a
+  password. Bulk-upload row errors read "field: message".
+- Pydantic 2 makes `Optional` fields without a default required, so every
+  such field got `= None`, as v1 implied.

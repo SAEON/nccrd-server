@@ -62,3 +62,11 @@ def test_short_password_and_non_admin_are_refused(api, admin):
     assert admin.post('/auth/register', json={**REQUEST, 'password': 'short'}, headers={'Authorization': ''}).status_code == 422
     capturer = api(email='capturer@example.org', permissions=['create-submission'])
     assert capturer.get('/rbac/registrations').status_code == 403
+
+
+def test_rejected_input_is_not_echoed_back(api):
+    """422s list what's wrong, not the submitted values (which include the password)."""
+    r = api().post('/auth/register', json={'email': 'not-an-email', 'password': 'S3cret-Do-Not-Echo'})
+    assert r.status_code == 422
+    assert 'S3cret-Do-Not-Echo' not in r.text
+    assert all(set(e) <= {'loc', 'msg', 'type'} for e in r.json()['detail'])

@@ -27,7 +27,7 @@ from datetime import datetime
 from typing import Any, List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, validator
+from pydantic import field_validator, ConfigDict, BaseModel, Field
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -115,11 +115,11 @@ class GeoLocationSchema(BaseModel):
     coordinates: Optional[List[float]] = Field(
         None,
         description="[longitude, latitude] decimal degree pair.",
-        min_items=2,
-        max_items=2,
+        min_length=2,
+        max_length=2,
     )
 
-    @validator("coordinates")
+    @field_validator("coordinates")
     @classmethod
     def validate_coordinates(cls, v: Optional[List[float]]) -> Optional[List[float]]:
         """Reject coordinates outside valid WGS-84 ranges."""
@@ -134,19 +134,17 @@ class GeoLocationSchema(BaseModel):
                     f"Latitude {lat} is out of range [-90, 90]."
                 )
         return v
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "country": "ZAF",
-                "province": "GT",
-                "district": "DC48",
-                "local_municipality": "GT484",
-                "town_suburb": "Barberton",
-                "type": "Point",
-                "coordinates": [30.374, -27.936],
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "country": "ZAF",
+            "province": "GT",
+            "district": "DC48",
+            "local_municipality": "GT484",
+            "town_suburb": "Barberton",
+            "type": "Point",
+            "coordinates": [30.374, -27.936],
         }
+    })
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -169,15 +167,13 @@ class ProgressReportCreate(BaseModel):
         None,
         description="Free-text notes or summary for this report.",
     )
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "file_url": "https://storage.example.com/reports/mrv-2024-q1.pdf",
-                "file_name": "mrv-2024-q1.pdf",
-                "notes": "Q1 2024 monitoring report.",
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "file_url": "https://storage.example.com/reports/mrv-2024-q1.pdf",
+            "file_name": "mrv-2024-q1.pdf",
+            "notes": "Q1 2024 monitoring report.",
         }
+    })
 
 
 class ProgressReportResponse(BaseModel):
@@ -189,9 +185,7 @@ class ProgressReportResponse(BaseModel):
     file_name: str
     upload_date: Optional[datetime] = None
     notes: Optional[str] = None
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -228,35 +222,33 @@ class MitigationCreate(BaseModel):
     organization_issuing_credits: Optional[str] = Field(None)
     voluntary_methodology: Optional[str] = Field(None)
     cdm_project_number: Optional[str] = Field(None)
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "sector": "Energy",
-                "subsector": "Renewable",
-                "secondary": "Solar",
-                "project_type": "Infrastructure",
-                "project_subtype": "Solar Farm",
-                "mitigation_program": "Emission Reduction Initiative",
-                "national_policy": "National Energy Policy",
-                "provincial_municipal": "City of Cape Town",
-                "primary_intended_outcome": "Reduce emissions by 30% by 2030",
-                "progress_calculator": "Milestone-based approach",
-                "environmental_co_benefit": "Biodiversity",
-                "environmental_co_benefit_description": "Enhanced local biodiversity",
-                "social_co_benefit": "Community upliftment",
-                "social_co_benefit_description": "Employment opportunities",
-                "economic_co_benefit": "Cost Savings",
-                "economic_co_benefit_description": "Reduced energy bills",
-                "carbon_credit": "Yes",
-                "cdm_voluntary": "Voluntary credits",
-                "cdm_executive_board_status": "Active",
-                "cdm_methodology": "Methodology XYZ",
-                "organization_issuing_credits": "Green Credits Org",
-                "voluntary_methodology": "Voluntary Method ABC",
-                "cdm_project_number": "CDM12345",
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "sector": "Energy",
+            "subsector": "Renewable",
+            "secondary": "Solar",
+            "project_type": "Infrastructure",
+            "project_subtype": "Solar Farm",
+            "mitigation_program": "Emission Reduction Initiative",
+            "national_policy": "National Energy Policy",
+            "provincial_municipal": "City of Cape Town",
+            "primary_intended_outcome": "Reduce emissions by 30% by 2030",
+            "progress_calculator": "Milestone-based approach",
+            "environmental_co_benefit": "Biodiversity",
+            "environmental_co_benefit_description": "Enhanced local biodiversity",
+            "social_co_benefit": "Community upliftment",
+            "social_co_benefit_description": "Employment opportunities",
+            "economic_co_benefit": "Cost Savings",
+            "economic_co_benefit_description": "Reduced energy bills",
+            "carbon_credit": "Yes",
+            "cdm_voluntary": "Voluntary credits",
+            "cdm_executive_board_status": "Active",
+            "cdm_methodology": "Methodology XYZ",
+            "organization_issuing_credits": "Green Credits Org",
+            "voluntary_methodology": "Voluntary Method ABC",
+            "cdm_project_number": "CDM12345",
         }
+    })
 
 
 class MitigationResponse(BaseModel):
@@ -285,9 +277,7 @@ class MitigationResponse(BaseModel):
     organization_issuing_credits: Optional[str] = None
     voluntary_methodology: Optional[str] = None
     cdm_project_number: Optional[str] = None
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -310,21 +300,19 @@ class AdaptationCreate(BaseModel):
     climate_impact: Optional[str] = Field(None)
     address_climate_impact: Optional[str] = Field(None)
     impact_response: Optional[str] = Field(None)
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "sector": "Environment",
-                "national_policy": "National Biodiversity Strategy",
-                "intervention_goal": "Conservation",
-                "provincial_municipal": "City of Cape Town",
-                "hazard": "Invasive Species",
-                "progress_calculator": "Progress details here",
-                "climate_impact": "Low impact",
-                "address_climate_impact": "Mitigation measures planned",
-                "impact_response": "Ongoing response",
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "sector": "Environment",
+            "national_policy": "National Biodiversity Strategy",
+            "intervention_goal": "Conservation",
+            "provincial_municipal": "City of Cape Town",
+            "hazard": "Invasive Species",
+            "progress_calculator": "Progress details here",
+            "climate_impact": "Low impact",
+            "address_climate_impact": "Mitigation measures planned",
+            "impact_response": "Ongoing response",
         }
+    })
 
 
 class AdaptationResponse(BaseModel):
@@ -339,9 +327,7 @@ class AdaptationResponse(BaseModel):
     climate_impact: Optional[str] = None
     address_climate_impact: Optional[str] = None
     impact_response: Optional[str] = None
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -420,60 +406,57 @@ class SubmissionCreate(BaseModel):
         ),
     )
 
-    @validator("project_manager_email")
+    @field_validator("project_manager_email")
     @classmethod
     def validate_project_manager_email(cls, v: str) -> str:
         """Reject obviously-malformed email addresses."""
         if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
             raise ValueError(f"'{v}' is not a valid email address.")
         return v
-
-    class Config:
-        use_enum_values = True
-        schema_extra = {
-            "example": {
-                "title": "Mpu Barbeton IAP Control Programme",
-                "intervention_measurement": "Cross Cutting",
-                "description": (
-                    "This programme aims to improve the integrity of natural resources "
-                    "by preventing the introduction of new invasive alien species."
-                ),
-                "implementation_status": "Under Implementation",
-                "implementation_organization": "DFFE",
-                "implementation_partners_other": "N/A",
-                "start_date": "2021-01-01T00:00:00Z",
-                "end_date": "2025-12-31T00:00:00Z",
-                "link": "https://example.com",
-                "funding_organization": "Expanded Public Works Programme",
-                "funding_type": "Grant",
-                "funding_amount": 537841.67,
-                "estimated_budget_cost": "R500k – R1m",
-                "geo_location": {
-                    "country": "ZAF",
-                    "province": "GT",
-                    "district": "DC48",
-                    "local_municipality": "GT484",
-                    "town_suburb": "Barberton",
-                    "type": "Point",
-                    "coordinates": [30.374, -27.936],
-                },
-                "project_manager_name": "Gladys Nyundu",
-                "project_manager_organization": "DFFE",
-                "project_manager_email": "gnyundu@environment.gov.za",
-                "project_manager_contact_number": "0821234567",
-                "research": "Preliminary research completed.",
-                "platform": "API",
-                "mitigation_data": {
-                    "sector": "Energy",
-                    "subsector": "Renewable",
-                    "environmental_co_benefit": "Biodiversity",
-                },
-                "adaptation_data": {
-                    "sector": "Environment",
-                    "hazard": "Invasive Species",
-                },
-            }
+    model_config = ConfigDict(use_enum_values=True, json_schema_extra={
+        "example": {
+            "title": "Mpu Barbeton IAP Control Programme",
+            "intervention_measurement": "Cross Cutting",
+            "description": (
+                "This programme aims to improve the integrity of natural resources "
+                "by preventing the introduction of new invasive alien species."
+            ),
+            "implementation_status": "Under Implementation",
+            "implementation_organization": "DFFE",
+            "implementation_partners_other": "N/A",
+            "start_date": "2021-01-01T00:00:00Z",
+            "end_date": "2025-12-31T00:00:00Z",
+            "link": "https://example.com",
+            "funding_organization": "Expanded Public Works Programme",
+            "funding_type": "Grant",
+            "funding_amount": 537841.67,
+            "estimated_budget_cost": "R500k – R1m",
+            "geo_location": {
+                "country": "ZAF",
+                "province": "GT",
+                "district": "DC48",
+                "local_municipality": "GT484",
+                "town_suburb": "Barberton",
+                "type": "Point",
+                "coordinates": [30.374, -27.936],
+            },
+            "project_manager_name": "Gladys Nyundu",
+            "project_manager_organization": "DFFE",
+            "project_manager_email": "gnyundu@environment.gov.za",
+            "project_manager_contact_number": "0821234567",
+            "research": "Preliminary research completed.",
+            "platform": "API",
+            "mitigation_data": {
+                "sector": "Energy",
+                "subsector": "Renewable",
+                "environmental_co_benefit": "Biodiversity",
+            },
+            "adaptation_data": {
+                "sector": "Environment",
+                "hazard": "Invasive Species",
+            },
         }
+    })
 
 
 class SubmissionUpdate(BaseModel):
@@ -525,22 +508,19 @@ class SubmissionUpdate(BaseModel):
 
     mitigation_data: Optional[MitigationCreate] = None
     adaptation_data: Optional[AdaptationCreate] = None
-
-    class Config:
-        use_enum_values = True
-        schema_extra = {
-            "example": {
-                "title": "Mpu Barbeton IAP Control – Revised",
-                "description": "Revised description with updated research findings.",
-                "implementation_status": "Completed",
-                "issubmitted": True,
-                "updatedate": "2025-06-01T12:00:00Z",
-                "mitigation_data": {
-                    "sector": "Energy",
-                    "primary_intended_outcome": "30% emission reduction achieved",
-                },
-            }
+    model_config = ConfigDict(use_enum_values=True, json_schema_extra={
+        "example": {
+            "title": "Mpu Barbeton IAP Control – Revised",
+            "description": "Revised description with updated research findings.",
+            "implementation_status": "Completed",
+            "issubmitted": True,
+            "updatedate": "2025-06-01T12:00:00Z",
+            "mitigation_data": {
+                "sector": "Energy",
+                "primary_intended_outcome": "30% emission reduction achieved",
+            },
         }
+    })
 
 
 class SubmissionModel(BaseModel):
@@ -578,9 +558,7 @@ class SubmissionModel(BaseModel):
     deletedby: Optional[int] = None
     deletedate: Optional[datetime] = None
     deleted: Optional[bool] = False
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SubmissionResponse(BaseModel):
@@ -627,9 +605,7 @@ class SubmissionResponse(BaseModel):
     progress_reports: Optional[List[ProgressReportResponse]] = None
     mitigation: Optional[MitigationResponse] = None
     adaptation: Optional[AdaptationResponse] = None
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ReviewDecision(BaseModel):

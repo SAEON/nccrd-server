@@ -1,5 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from nccrd.api.routers import auth, submission, region, rbac, report, vocabulary, pipeline
@@ -13,6 +16,14 @@ app = FastAPI(
     docs_url='/swagger',
     redoc_url='/docs',
 )
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 as before Pydantic 2: each problem's location, message and type,
+    without the submitted input Pydantic 2 echoes back (it can hold a password)."""
+    errors = [{k: e[k] for k in ("loc", "msg", "type") if k in e} for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
 
 @app.get('/health', tags=['Health'])
 def health():
