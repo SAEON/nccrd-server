@@ -4,6 +4,13 @@ from typing import ClassVar, Dict, Optional, Type, Union
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: Every settings group reads the same .env, which holds every group's variables
+#: (NCCRD_DB_*, NCCRD_*...): each ignores the ones it doesn't declare, which
+#: pydantic-settings 2 would otherwise reject. Repeated in each class below
+#: because pydantic merges config base by base: NCCRDDBConfig's second base,
+#: DBConfigMixin, would otherwise reset these to the defaults.
+_SHARED = dict(env_file='.env', extra='ignore')
+
 
 class BaseConfig(BaseSettings):
     """Base configuration class.
@@ -40,9 +47,7 @@ class BaseConfig(BaseSettings):
             return subconfig[name]
         return super().__getattr__(name)
 
-    # extra='ignore': .env holds every group's variables (NCCRD_DB_*, ...), and
-    # pydantic-settings 2 would otherwise reject the ones a group doesn't declare.
-    model_config = SettingsConfigDict(env_file='.env', extra='ignore')
+    model_config = SettingsConfigDict(**_SHARED)
 
 
 class DBConfigMixin(BaseSettings):
@@ -60,11 +65,11 @@ class DBConfigMixin(BaseSettings):
 
 
 class NCCRDDBConfig(BaseConfig, DBConfigMixin):
-    model_config = SettingsConfigDict(env_prefix='NCCRD_DB_')
+    model_config = SettingsConfigDict(**_SHARED, env_prefix='NCCRD_DB_')
 
 
 class NCCRDInnerConfig(BaseConfig):
-    model_config = SettingsConfigDict(env_prefix='NCCRD_')
+    model_config = SettingsConfigDict(**_SHARED, env_prefix='NCCRD_')
 
     API_URL: Optional[str] = None
     JWT_SECRET: str
@@ -88,7 +93,7 @@ class NCCRDInnerConfig(BaseConfig):
 
 
 class NCCRDRootConfig(BaseConfig):
-    model_config = SettingsConfigDict(env_prefix='')
+    model_config = SettingsConfigDict(**_SHARED, env_prefix='')
 
     _subconfig: ClassVar[Dict[str, Union[Type[BaseConfig], BaseConfig]]] = {
         'NCCRD': NCCRDInnerConfig,
