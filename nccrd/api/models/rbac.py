@@ -95,6 +95,22 @@ class TenantResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SiteResponse(BaseModel):
+    """What the web interface needs to show the current site: its names, the
+    province it covers, and its branding. Public: no IDs, roles or settings."""
+    hostname: str
+    title: Optional[str] = None
+    short_title: Optional[str] = None
+    province: Optional[str] = None
+    logo_url: Optional[str] = None
+    flag_url: Optional[str] = None
+    contact_email: Optional[str] = None
+    theme: Optional[dict] = None
+    front_matter: Optional[dict] = None
+    is_default: bool
+    model_config = ConfigDict(from_attributes=True)
+
+
 class UserRoleTenantResponse(BaseModel):
     """A single user-role-tenant assignment, as used for permission checks."""
 

@@ -86,6 +86,9 @@ class NCCRDInnerConfig(BaseConfig):
         'http://localhost:5174,http://127.0.0.1:5174,'
         'http://localhost:5175'
     )
+    # Origins allowed as a pattern: by default each site's local address in
+    # development, e.g. http://mccrd.localhost:5173 (see nccrd.api.lib.tenant).
+    CORS_ORIGIN_REGEX: str = r'http://[a-z0-9-]+\.localhost(:\d+)?'
 
     _subconfig: ClassVar[Dict[str, Union[Type[BaseConfig], BaseConfig]]] = {
         'DB': NCCRDDBConfig,

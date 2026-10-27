@@ -12,7 +12,7 @@ Changelog vs. previous version
   endpoint are protected by ``Depends(RequirePermission(...))``, which checks
   authentication (``Authorize``) and an RBAC permission for the current tenant.
 * List/read endpoints and all write endpoints are scoped to the tenant
-  resolved from the request's Host header (see ``nccrd.api.lib.tenant``);
+  resolved from the request's site (see ``nccrd.api.lib.tenant``);
   writes also link the new submission to that tenant.
 * Bulk-upload endpoint (``create_submission_upload-xlsx``) completely rewritten:
   - Reads the first row as column headers (tabular format).
@@ -175,23 +175,31 @@ def _scope_to_tenant(query: SAQuery, tenant: Tenant) -> SAQuery:
     Restrict a ``Submission`` query to what ``tenant`` is allowed to see:
     submissions explicitly linked to it via ``tenant_xref_submission``, plus
     (when ``include_unbounded_submissions`` is set) submissions not linked to
-    any tenant at all.
+    any tenant at all, plus (on a province site) every submission located in
+    its province.
     """
-    linked = exists().where(
+    visible = [exists().where(
         and_(
             TenantXrefSubmission.submission_id == Submission.id,
             TenantXrefSubmission.tenant_id == tenant.id,
         )
-    )
+    )]
     if tenant.include_unbounded_submissions:
-        unbound = ~exists().where(TenantXrefSubmission.submission_id == Submission.id)
-        return query.filter(or_(linked, unbound))
-    return query.filter(linked)
+        visible.append(~exists().where(TenantXrefSubmission.submission_id == Submission.id))
+    if tenant.province:
+        visible.append(_province_filter(tenant.province))
+    return query.filter(or_(*visible))
 
 
 def _link_submission_to_tenant(db: Session, submission_id, tenant: Tenant) -> None:
-    """Record that ``submission_id`` belongs to ``tenant`` (multi-tenancy)."""
+    """Record that ``submission_id`` belongs to ``tenant`` (multi-tenancy). A
+    submission made on a province site is also linked to the default
+    (national) site, which lists every province's projects."""
     db.add(TenantXrefSubmission(tenant_id=tenant.id, submission_id=submission_id))
+    if not tenant.is_default:
+        national = db.query(Tenant).filter(Tenant.is_default.is_(True)).first()
+        if national is not None:
+            db.add(TenantXrefSubmission(tenant_id=national.id, submission_id=submission_id))
 
 
 #: Legacy vocabulary ids stored in place of a name (40-char SHA-1 hex); they
@@ -662,7 +670,7 @@ def get_submissions_list(
 ) -> Response:
     """
     Return all non-deleted submissions visible to the tenant resolved from the
-    request's Host header, optionally filtered by any combination of facets.
+    request's site, optionally filtered by any combination of facets.
     """
     query = filtered_submissions(db, tenant, filters)
 
