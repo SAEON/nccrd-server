@@ -2,7 +2,8 @@
 
 A site (tenant) can now carry its own look and content: a slug (the first
 label of its address, so mccrd.environment.gov.za and mccrd.localhost are the
-same site), a short title, a logo and flag, a home page photo with its credit
+same site), a short title, an emblem shown beside the DFFE logo (logo_url) and
+a flag, a home page photo with its credit
 (hero_image), About texts (front_matter), and colours (the existing theme
 column, as CSS colour values by variable name).
 A site with a province lists every project located in that province, as well
@@ -12,11 +13,11 @@ The national (default) site gets its full title, with "NCCRD" as its short
 title, where it was only called "NCCRD": the interface shows both.
 
 Adds a site for each of the nine provinces. The Mpumalanga site has the
-title, texts and colours of the legacy MCCRD site (mccrd.environment.gov.za);
-its logo and flag are files of the web interface (public/sites/mccrd/). The
-other eight have no legacy site: they get the MCCRD's texts with their own
-names, a colour from their coat of arms, and the national logo and flag. Each
-has a photo of a landmark of the province on its home page.
+title, texts and colours of the legacy MCCRD site (mccrd.environment.gov.za).
+The other eight have no legacy site: they get the MCCRD's texts with their
+own names and a colour from their coat of arms. Each shows its coat of arms
+where a free copy exists, and a photo of a landmark of the province on its
+home page; the images are files of the web interface (public/sites/<slug>/).
 
 Downgrade removes the province sites and the new columns.
 
@@ -202,8 +203,15 @@ def _theme(slug: str) -> dict:
     }
 
 
-#: Logo and flag files: only the legacy MCCRD had its own.
-LOGOS = {"mccrd": {"logo_url": "/sites/mccrd/logo.jpg", "flag_url": "/sites/mccrd/flag.jpg"}}
+#: The province's own emblem, shown beside the DFFE logo: its coat of arms
+#: (Wikimedia Commons, CC0), where a free copy exists; KwaZulu-Natal's and the
+#: Western Cape's are only on Wikipedia under fair use, so they have none yet.
+#: Mpumalanga, the one province with an official flag, also shows it.
+LOGOS = {
+    slug: {"logo_url": f"/sites/{slug}/arms.png"}
+    for slug in ("eccrd", "fccrd", "gccrd", "lccrd", "mccrd", "ncccrd", "nwccrd")
+}
+LOGOS["mccrd"]["flag_url"] = "/sites/mccrd/flag.svg"
 
 
 def _site(slug: str, province: str) -> dict:

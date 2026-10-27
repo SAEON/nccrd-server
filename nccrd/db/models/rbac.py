@@ -104,7 +104,7 @@ class Tenant(Base):
     slug = Column(String(50), unique=True)
     short_title = Column(String(100))
     province = Column(String(100))
-    logo_url = Column(String(500))
+    logo_url = Column(String(500))  # the site's emblem, beside the DFFE logo
     flag_url = Column(String(500))
     front_matter = Column(JSON)
     hero_image = Column(JSON)
