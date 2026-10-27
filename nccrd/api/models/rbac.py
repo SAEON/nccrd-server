@@ -107,6 +107,7 @@ class SiteResponse(BaseModel):
     contact_email: Optional[str] = None
     theme: Optional[dict] = None
     front_matter: Optional[dict] = None
+    hero_image: Optional[dict] = None
     is_default: bool
     model_config = ConfigDict(from_attributes=True)
 

@@ -2,8 +2,9 @@
 
 A site (tenant) can now carry its own look and content: a slug (the first
 label of its address, so mccrd.environment.gov.za and mccrd.localhost are the
-same site), a short title, a logo and flag, About texts (front_matter), and
-colours (the existing theme column, as CSS colour values by variable name).
+same site), a short title, a logo and flag, a home page photo with its credit
+(hero_image), About texts (front_matter), and colours (the existing theme
+column, as CSS colour values by variable name).
 A site with a province lists every project located in that province, as well
 as the projects linked to it.
 
@@ -14,7 +15,8 @@ Adds a site for each of the nine provinces. The Mpumalanga site has the
 title, texts and colours of the legacy MCCRD site (mccrd.environment.gov.za);
 its logo and flag are files of the web interface (public/sites/mccrd/). The
 other eight have no legacy site: they get the MCCRD's texts with their own
-names, and the national look until they have their own logo and colours.
+names, a colour from their coat of arms, and the national logo and flag. Each
+has a photo of a landmark of the province on its home page.
 
 Downgrade removes the province sites and the new columns.
 
@@ -94,36 +96,127 @@ PROVINCES = [
     ("wccrd", "Western Cape"),
 ]
 
-#: The legacy MCCRD's own branding: its primary (brown) and secondary (blue)
-#: colours, with shades of the brown for the interface's lighter accents.
-LEGACY_BRANDING = {
+#: Each province's main colour, from its own symbols: the colours of its
+#: provincial coat of arms (Bureau of Heraldry blazons), one shade each so no
+#: two sites look alike; Mpumalanga keeps the legacy MCCRD's brown. All carry
+#: white text at 7:1 or more.
+COLOURS = {
+    "eccrd": "#0b4f7a",   # arms: blue wavy bars, the province's coastline
+    "fccrd": "#8e2459",   # arms: the Orange River lily
+    "gccrd": "#6b5200",   # arms: gold pick; "place of gold"; gold on gauteng.gov.za
+    "kccrd": "#0f5f5c",   # arms: green band below a blue chief
+    "lccrd": "#4a5a12",   # arms: green (farming) and golden yellow (minerals)
+    "mccrd": "#622700",   # the legacy MCCRD's primary colour
+    "ncccrd": "#8c2d19",  # arms: red over blue
+    "nwccrd": "#00653e",  # arms: the national flag's colours; its green
+    "wccrd": "#1e3a8a",   # arms: blue on white
+}
+
+#: Charts take a province's second colour where it has one, else a lighter
+#: step of the main colour (see _theme).
+CHART_COLOURS = {
+    "gccrd": "#94804a",   # gauteng.gov.za's gold
+    "mccrd": "#0a51a5",   # the legacy MCCRD's secondary blue
+    "ncccrd": "#2b5797",  # arms: blue
+}
+
+#: Each site's home page photo, public/sites/<slug>/hero.jpg in the web
+#: interface: a landmark of the province from Wikimedia Commons, credited on
+#: the page as its licence requires.
+HERO_IMAGES = {
+    "eccrd": {
+        "credit": "Vincentvanoosten",
+        "license": "CC0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Hole_In_The_Wall.jpg",
+    },
+    "fccrd": {
+        "credit": "Pavel Špindler",
+        "license": "CC BY 3.0",
+        "license_url": "https://creativecommons.org/licenses/by/3.0/",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Zebry_a_po%C5%BE%C3%A1r_v_Golden_Gate_Highlands_National_Park,_Jihoafrick%C3%A1_republika_-_panoramio.jpg",
+    },
+    "gccrd": {
+        "credit": "Mark Hillary",
+        "license": "CC BY 2.0",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Johannesburg_skyline_2017.jpg",
+    },
+    "kccrd": {
+        "credit": "PhilippN",
+        "license": "CC BY-SA 3.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Amphitheatre_Drakensberg_View.jpg",
+    },
+    "lccrd": {
+        "credit": "flowcomm",
+        "license": "CC BY 2.0",
+        "license_url": "https://creativecommons.org/licenses/by/2.0/",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Baobab_tree,_Limpopo,_South_Africa_(28585956104).jpg",
+    },
     "mccrd": {
-        "logo_url": "/sites/mccrd/logo.jpg",
-        "flag_url": "/sites/mccrd/flag.jpg",
-        "theme": {
-            "accent-primary": "#622700",
-            "accent-secondary": "#7a3810",
-            "accent-green": "#8a4a1e",
-            "accent-light": "#ad6c3c",
-            "accent-surface": "rgba(98, 39, 0, 0.04)",
-            "accent-border": "rgba(98, 39, 0, 0.15)",
-            "chart-series": "#0a51a5",
-        },
+        "credit": "Dietmar Rabich",
+        "license": "CC BY-SA 4.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Blyde_River_Canyon_Nature_Reserve_(ZA),_Lowveld_View,_Blyde_River_--_2024_--_9964.jpg",
+    },
+    "ncccrd": {
+        "credit": "Svwmal",
+        "license": "CC BY-SA 4.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Augrabies_Falls_oct2019.jpg",
+    },
+    "nwccrd": {
+        "credit": "Ymblanter",
+        "license": "CC BY-SA 4.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Pilanesberg_National_Park_Animals_seen_from_Pilanesberg_Centre_01.jpg",
+    },
+    "wccrd": {
+        "credit": "Dietmar Rabich",
+        "license": "CC BY-SA 4.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "source_url": "https://commons.wikimedia.org/wiki/File:Cape_Town_(ZA),_Table_Mountain_--_2024_--_2794%2B96%2B98%2B2800%2B01.jpg",
     },
 }
 
 
+def _mix(colour: str, white: float) -> str:
+    """``colour`` lightened towards white by the fraction ``white``."""
+    rgb = [int(colour[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(c + (255 - c) * white):02x}" for c in rgb)
+
+
+def _theme(slug: str) -> dict:
+    """The colours the interface themes by, from the province's main colour."""
+    primary = COLOURS[slug]
+    r, g, b = (int(primary[i:i + 2], 16) for i in (1, 3, 5))
+    return {
+        "accent-primary": primary,
+        "accent-secondary": _mix(primary, 0.12),
+        "accent-green": _mix(primary, 0.22),
+        "accent-light": _mix(primary, 0.4),
+        "accent-surface": f"rgba({r}, {g}, {b}, 0.04)",
+        "accent-border": f"rgba({r}, {g}, {b}, 0.15)",
+        "chart-series": CHART_COLOURS.get(slug, _mix(primary, 0.15)),
+    }
+
+
+#: Logo and flag files: only the legacy MCCRD had its own.
+LOGOS = {"mccrd": {"logo_url": "/sites/mccrd/logo.jpg", "flag_url": "/sites/mccrd/flag.jpg"}}
+
+
 def _site(slug: str, province: str) -> dict:
     names = {"title": f"{province} Climate Change Response Database", "short_title": slug.upper()}
-    branding = LEGACY_BRANDING.get(slug, {})
     return {
         "hostname": f"{slug}.environment.gov.za",
         "slug": slug,
         "province": province,
         "contact_email": "nccrd@environment.gov.za",
-        "logo_url": branding.get("logo_url"),
-        "flag_url": branding.get("flag_url"),
-        "theme": json.dumps(branding["theme"]) if "theme" in branding else None,
+        "logo_url": LOGOS.get(slug, {}).get("logo_url"),
+        "flag_url": LOGOS.get(slug, {}).get("flag_url"),
+        "theme": json.dumps(_theme(slug)),
+        "hero_image": json.dumps(dict(HERO_IMAGES[slug], url=f"/sites/{slug}/hero.jpg")),
         "front_matter": json.dumps({
             key: {field: text.format(**names) for field, text in section.items()}
             for key, section in FRONT_MATTER.items()
@@ -139,6 +232,7 @@ def upgrade() -> None:
     op.add_column("tenant", sa.Column("logo_url", sa.String(500)), schema="nccrd")
     op.add_column("tenant", sa.Column("flag_url", sa.String(500)), schema="nccrd")
     op.add_column("tenant", sa.Column("front_matter", sa.JSON()), schema="nccrd")
+    op.add_column("tenant", sa.Column("hero_image", sa.JSON()), schema="nccrd")
     op.create_unique_constraint("tenant_slug_key", "tenant", ["slug"], schema="nccrd")
 
     bind = op.get_bind()
@@ -151,9 +245,9 @@ def upgrade() -> None:
     for slug, province in PROVINCES:
         bind.execute(sa.text(
             "INSERT INTO nccrd.tenant (hostname, slug, title, short_title, province, logo_url, flag_url, "
-            "contact_email, theme, front_matter, is_default, include_unbounded_submissions) "
+            "contact_email, theme, hero_image, front_matter, is_default, include_unbounded_submissions) "
             "SELECT :hostname, :slug, :title, :short_title, :province, :logo_url, :flag_url, "
-            "  :contact_email, CAST(:theme AS json), CAST(:front_matter AS json), false, false "
+            "  :contact_email, CAST(:theme AS json), CAST(:hero_image AS json), CAST(:front_matter AS json), false, false "
             "WHERE NOT EXISTS (SELECT 1 FROM nccrd.tenant WHERE hostname = :hostname OR slug = :slug)"
         ), _site(slug, province))
 
@@ -165,5 +259,5 @@ def downgrade() -> None:
         "  SELECT 1 FROM nccrd.user_xref_role_xref_tenant u WHERE u.tenant_id = nccrd.tenant.id)"
     ).bindparams(sa.bindparam("slugs", expanding=True)), {"slugs": [slug for slug, _ in PROVINCES]})
     op.drop_constraint("tenant_slug_key", "tenant", schema="nccrd")
-    for column in ("front_matter", "flag_url", "logo_url", "province", "short_title", "slug"):
+    for column in ("hero_image", "front_matter", "flag_url", "logo_url", "province", "short_title", "slug"):
         op.drop_column("tenant", column, schema="nccrd")

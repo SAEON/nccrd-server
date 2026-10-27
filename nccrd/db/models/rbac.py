@@ -99,13 +99,15 @@ class Tenant(Base):
     include_unbounded_submissions = Column(Boolean, default=False, nullable=False)
     # Province sites (e.g. MCCRD): the first label of the site's address, so
     # mccrd.environment.gov.za and mccrd.localhost are the same site; the
-    # province whose projects it lists; and its branding.
+    # province whose projects it lists; and its branding, including the
+    # home page photo (url, credit, licence, source_url).
     slug = Column(String(50), unique=True)
     short_title = Column(String(100))
     province = Column(String(100))
     logo_url = Column(String(500))
     flag_url = Column(String(500))
     front_matter = Column(JSON)
+    hero_image = Column(JSON)
 
 
 class TenantXrefSubmission(Base):

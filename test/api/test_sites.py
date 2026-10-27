@@ -25,6 +25,7 @@ def sites():
         hostname='mccrd.environment.gov.za', slug='mccrd', title='Mpumalanga Climate Change Response Database',
         short_title='MCCRD', province='Mpumalanga', logo_url='/sites/mccrd/logo.jpg',
         theme={'accent-primary': '#622700'}, front_matter={'about': {'title': 'Welcome', 'content': 'Text'}},
+        hero_image={'url': '/sites/mccrd/hero.jpg', 'credit': 'Dietmar Rabich', 'license': 'CC BY-SA 4.0'},
     )
     FactorySession.add_all([national, mpumalanga])
     FactorySession.commit()
@@ -64,6 +65,7 @@ def test_site_returns_branding_publicly(api, sites):
     assert site['logo_url'] == '/sites/mccrd/logo.jpg'
     assert site['theme'] == {'accent-primary': '#622700'}
     assert site['front_matter']['about']['title'] == 'Welcome'
+    assert site['hero_image']['credit'] == 'Dietmar Rabich'
     assert 'id' not in site and 'include_unbounded_submissions' not in site
 
 
