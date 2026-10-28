@@ -9,7 +9,8 @@ from test import TestSession
 from test.factories import FactorySession
 
 REQUEST = {'name': 'Thandi M', 'email': 'Thandi.M@example.org', 'organisation': 'City of Joburg',
-           'password': 'a-long-password', 'note': 'I capture the city’s adaptation projects.'}
+           'password': 'a-long-password', 'note': 'I capture the city’s adaptation projects.',
+           'accept_privacy_notice': True}
 
 
 @pytest.fixture

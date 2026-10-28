@@ -69,6 +69,8 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     summary="Request an account. An administrator approves it before it can log in.",
 )
 def register(body: RegisterRequest, db: Session = Depends(get_db)) -> dict:
+    if not body.accept_privacy_notice:
+        raise HTTPException(status_code=422, detail="Accept the privacy notice to request an account.")
     email = body.email.strip()
     if "@" not in email or email.startswith("@") or email.endswith("@"):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
@@ -81,6 +83,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> dict:
             password_hash=hash_password(body.password),
             password_set_at=datetime.now(timezone.utc),
             registration_status="pending",
+            privacy_notice_accepted_at=datetime.now(timezone.utc),
         ))
         db.commit()
     return {"detail": _REGISTRATION_RECEIVED}

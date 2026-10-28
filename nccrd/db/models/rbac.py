@@ -39,6 +39,8 @@ class User(Base):
     registration_status = Column(String(20))
     organisation = Column(String(500))
     registration_note = Column(Text)
+    # When the person accepted the privacy notice on signing up (POPIA).
+    privacy_notice_accepted_at = Column(DateTime)
 
     role_assignments = relationship(
         "UserXrefRoleXrefTenant",

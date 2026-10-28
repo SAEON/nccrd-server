@@ -460,8 +460,42 @@ CURATOR_PERMISSIONS = ("update-submission", REVIEW_PERMISSION, "change-submissio
 #: POST /{id}/review, ownership and audit columns are set by the server.
 _PROTECTED_FIELDS = {
     "submission_status", "submission_comments", "issubmitted", "createdby", "createdate",
-    "updatedate", "updatedby", "deletedby", "deletedate", "deleted",
+    "updatedate", "updatedby", "deletedby", "deletedate", "deleted", "contact_consent_at",
 }
+
+#: The project manager's contact details: personal information (POPIA). The
+#: submitter must confirm the manager agreed to them being held for the
+#: project (``contact_consent``), and only the owner and reviewers see the
+#: email and phone number.
+CONTACT_FIELDS = ("project_manager_name", "project_manager_email", "project_manager_contact_number")
+CONTACT_CONSENT_REQUIRED = (
+    "Confirm that the project manager agreed to their contact details being held for this project."
+)
+
+
+def _has_text(value) -> bool:
+    return bool(str(value or "").strip())
+
+
+def _contact_changes(submission: Submission, data: Dict[str, Any]) -> bool:
+    """Does ``data`` give the project manager contact details that differ from
+    what is stored? Clearing them, or resending the same ones, needs no new
+    consent."""
+    return any(
+        field in data and _has_text(data[field])
+        and str(data[field]).strip() != str(getattr(submission, field) or "").strip()
+        for field in CONTACT_FIELDS
+    )
+
+
+def _may_see_contact(db: Session, submission: Submission, uid: Optional[int], tenant: Tenant) -> bool:
+    """The project manager's email and phone are for the project's owner,
+    reviewers and curators, not the public."""
+    return uid is not None and (
+        submission.createdby == uid
+        or user_has_permission(db, uid, REVIEW_PERMISSION, tenant.id)
+        or is_curator(db, uid, tenant)
+    )
 
 
 def is_curator(db: Session, user_id: int, tenant: Tenant) -> bool:
@@ -693,7 +727,7 @@ def read_submission(
         db: Session = Depends(get_db),
         tenant: Tenant = Depends(get_current_tenant),
         auth: Optional[Authorized] = Depends(OptionalAuthorize()),
-) -> Submission:
+) -> SubmissionResponse:
     """
     Fetch one submission by UUID and attach the relevant child records.
 
@@ -744,7 +778,11 @@ def read_submission(
         submission.mitigation = None
         submission.adaptation = None
 
-    return submission
+    response = SubmissionResponse.model_validate(submission)
+    if not _may_see_contact(db, submission, auth.internal_user_id if auth else None, tenant):
+        response.project_manager_email = None
+        response.project_manager_contact_number = None
+    return response
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -766,6 +804,10 @@ def create_submission(
     Persist a new submission.  Mitigation / Adaptation child records are
     created automatically based on ``intervention_measurement``.
     """
+    gives_contact = any(_has_text(getattr(submission, f)) for f in CONTACT_FIELDS)
+    if gives_contact and not submission.contact_consent:
+        raise HTTPException(status_code=422, detail=CONTACT_CONSENT_REQUIRED)
+
     geo_dict = _region_codes_to_names(
         db, submission.geo_location.model_dump(exclude_none=True) if submission.geo_location else None
     )
@@ -789,6 +831,7 @@ def create_submission(
         project_manager_organization=submission.project_manager_organization,
         project_manager_email=submission.project_manager_email,
         project_manager_contact_number=submission.project_manager_contact_number,
+        contact_consent_at=datetime.utcnow() if gives_contact else None,
         submission_status="Pending",
         issubmitted=True,
         platform=submission.platform,
@@ -869,6 +912,14 @@ def update_submission(
 
     if "expected_updatedate" in data:
         _check_not_modified_since(db, submission, data.pop("expected_updatedate"))
+
+    contact_consent = data.pop("contact_consent", None)
+    if _contact_changes(submission, data):
+        if not contact_consent:
+            raise HTTPException(status_code=422, detail=CONTACT_CONSENT_REQUIRED)
+        submission.contact_consent_at = datetime.utcnow()
+    elif contact_consent and submission.contact_consent_at is None:
+        submission.contact_consent_at = datetime.utcnow()
 
     # Pull nested payloads out before applying scalar updates.
     mitigation_update: Optional[Dict[str, Any]] = data.pop("mitigation_data", None)
@@ -1080,6 +1131,11 @@ async def upload_progress_report(
 async def create_submission_upload_xlsx(
         file: UploadFile = File(...),
         data_source: Optional[str] = Query(default=None),
+        contact_consent: bool = Query(
+            default=False,
+            description="The uploader confirms the project managers listed agreed to their contact details "
+                        "being held for these projects (POPIA); required when the workbook gives any.",
+        ),
         db: Session = Depends(get_db),
         auth: Authorized = Depends(RequirePermission("upload-template")),
         tenant: Tenant = Depends(get_current_tenant),
@@ -1218,6 +1274,14 @@ async def create_submission_upload_xlsx(
             },
         )
 
+    gives_contact = any(_has_text(getattr(s, f)) for s in submissions_to_create for f in CONTACT_FIELDS)
+    if gives_contact and not contact_consent:
+        raise HTTPException(
+            status_code=422,
+            detail="Confirm that the project managers listed agreed to their contact details being held "
+                   "for these projects.",
+        )
+
     # ── Batch insert in a single transaction ──────────────────────────────────
     created_ids: List[str] = []
     try:
@@ -1246,6 +1310,9 @@ async def create_submission_upload_xlsx(
                 project_manager_organization=submission.project_manager_organization,
                 project_manager_email=submission.project_manager_email,
                 project_manager_contact_number=submission.project_manager_contact_number,
+                contact_consent_at=(
+                    datetime.utcnow() if any(_has_text(getattr(submission, f)) for f in CONTACT_FIELDS) else None
+                ),
                 submission_status="Pending",
                 issubmitted=True,
                 platform=submission.platform,

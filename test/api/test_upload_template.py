@@ -84,7 +84,7 @@ def test_filled_template_uploads_with_details_on_the_right_projects(uploader):
     out = io.BytesIO()
     wb.save(out)
 
-    r = uploader.post('/submission/create_submission_upload-xlsx/',
+    r = uploader.post('/submission/create_submission_upload-xlsx/', params={'contact_consent': 'true'},
                       files={'file': ('filled.xlsx', out.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')})
     assert r.status_code in (200, 201), r.text
 

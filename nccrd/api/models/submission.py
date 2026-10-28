@@ -384,6 +384,13 @@ class SubmissionCreate(BaseModel):
         None,
         description="Phone or mobile contact number for the project manager.",
     )
+    contact_consent: bool = Field(
+        False,
+        description=(
+            "The submitter confirms the project manager agreed to their contact details being held "
+            "by DFFE for this project (POPIA); required when contact details are given."
+        ),
+    )
 
     # ── Misc ──────────────────────────────────────────────────────────────────
     research: Optional[str] = None
@@ -486,6 +493,7 @@ class SubmissionUpdate(BaseModel):
     project_manager_organization: Optional[str] = None
     project_manager_email: Optional[str] = None
     project_manager_contact_number: Optional[str] = None
+    contact_consent: Optional[bool] = None
 
     submission_status: Optional[str] = None
     submission_comments: Optional[str] = None
@@ -524,7 +532,9 @@ class SubmissionUpdate(BaseModel):
 
 
 class SubmissionModel(BaseModel):
-    """ORM-compatible schema for internal database layer interaction."""
+    """A submission in the public project list. Without the project manager's
+    email and phone number: personal information (POPIA), shown only on the
+    project page and only to its owner and reviewers."""
 
     _id: int
     id: UUID
@@ -544,8 +554,6 @@ class SubmissionModel(BaseModel):
     geo_location: Optional[Any] = None
     project_manager_name: Optional[str] = None
     project_manager_organization: Optional[str] = None
-    project_manager_email: Optional[str] = None
-    project_manager_contact_number: Optional[str] = None
     submission_status: Optional[str] = None
     submission_comments: Optional[str] = None
     issubmitted: Optional[bool] = False
@@ -586,6 +594,7 @@ class SubmissionResponse(BaseModel):
     project_manager_organization: Optional[str] = None
     project_manager_email: Optional[str] = None
     project_manager_contact_number: Optional[str] = None
+    contact_consent_at: Optional[datetime] = None
     submission_status: Optional[str] = None
     submission_comments: Optional[str] = None
     issubmitted: Optional[bool] = None

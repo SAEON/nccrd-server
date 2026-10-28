@@ -145,6 +145,9 @@ class Submission(Base):
     project_manager_email = Column(String)
     # Consolidated from project_manager_phone + project_manager_mobile.
     project_manager_contact_number = Column(String)
+    # When the submitter confirmed the project manager agreed to their contact
+    # details being held for this project (POPIA); NULL for legacy imports.
+    contact_consent_at = Column(DateTime)
 
     # ── Submission workflow ───────────────────────────────────────────────────
     submission_status = Column(String)
