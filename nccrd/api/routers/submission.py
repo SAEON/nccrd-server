@@ -322,6 +322,28 @@ def _get_valid_vocabulary_terms(db: Session) -> Set[str]:
     return {row[0].strip().lower() for row in rows if row[0]}
 
 
+#: Workbook column heading of each field, for messages to the uploader.
+_COLUMN_OF: Dict[Tuple[str, ...], str] = {
+    **{(field,): column for column, field in GENERAL_COLUMN_MAP.items()},
+    **{("geo_location", field.removeprefix("_geo_")): column
+       for column, field in GENERAL_COLUMN_MAP.items() if field.startswith("_geo_")},
+    **{("adaptation_data", field): column for column, field in ADAPTATION_COLUMN_MAP.items()},
+    **{("mitigation_data", field): column for column, field in MITIGATION_COLUMN_MAP.items()},
+}
+
+
+def _schema_error(row_idx: int, error: Dict[str, Any]) -> Dict[str, Any]:
+    """A Pydantic error on a workbook row, in the shape of the taxonomy errors."""
+    loc = tuple(str(p) for p in error["loc"])
+    value = error.get("input")
+    return {
+        "row": row_idx,
+        "column": _COLUMN_OF.get(loc[:2]) or _COLUMN_OF.get(loc[:1]) or ".".join(loc),
+        "value": None if error["type"] == "missing" or isinstance(value, dict) else value,
+        "message": "Required." if error["type"] == "missing" else error["msg"],
+    }
+
+
 def _parse_sheet_rows(
         sheet: Any,
         column_map: Dict[str, str],
@@ -1252,14 +1274,12 @@ async def create_submission_upload_xlsx(
             submission_obj = SubmissionCreate(**general_row)
             submissions_to_create.append(submission_obj)
         except ValidationError as exc:
-            # "field: message" per problem: Pydantic 2's own text adds type codes,
-            # documentation links and the whole row's values.
-            validation_errors.append({
-                "row": row_idx,
-                "error": "; ".join(f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()),
-            })
+            # One entry per problem, named by the workbook's column heading (the
+            # uploader never sees field names); Pydantic 2's own text adds type
+            # codes, documentation links and the whole row's values.
+            validation_errors.extend(_schema_error(row_idx, e) for e in exc.errors())
         except Exception as exc:
-            validation_errors.append({"row": row_idx, "error": str(exc)})
+            validation_errors.append({"row": row_idx, "message": str(exc)})
 
     # Reject the whole batch if any errors were found.
     if validation_errors:

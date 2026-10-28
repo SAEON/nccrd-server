@@ -92,3 +92,21 @@ def test_filled_template_uploads_with_details_on_the_right_projects(uploader):
     assert TestSession.query(Mitigation).filter_by(submission_id=by_title['Solar'].id).one().sector == 'Energy'
     dams = TestSession.query(Adaptation).filter_by(submission_id=by_title['Dams'].id).one()
     assert (dams.sector, dams.hazard) == ('Water', 'Drought')
+
+
+def test_rejected_rows_name_the_workbook_columns(uploader):
+    wb = _template(uploader)
+    _put(wb['General project details'], 1, 2, {'Project Title': 'Dams', 'Indicate the type of measure': 'Adaptation',
+                                               'Implementing organization': 'Org', 'Province': 'Gauteng'})
+    out = io.BytesIO()
+    wb.save(out)
+
+    r = uploader.post('/submission/create_submission_upload-xlsx/', params={'contact_consent': 'true'},
+                      files={'file': ('filled.xlsx', out.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')})
+    assert r.status_code == 422, r.text
+    errors = r.json()['detail']['errors']
+    assert {(e['row'], e['column'], e['message']) for e in errors} == {
+        (2, 'Project Manager Name', 'Required.'),
+        (2, 'Email address', 'Required.'),
+    }
+    assert TestSession.query(Submission).count() == 0
