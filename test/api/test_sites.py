@@ -108,3 +108,16 @@ def test_submission_on_province_site_is_also_national(sites):
 
     linked = {x.tenant_id for x in db.query(TenantXrefSubmission).filter_by(submission_id=submission.id)}
     assert linked == {national.id, mpumalanga.id}
+
+
+def test_province_site_offers_only_its_own_filter_options(api, sites):
+    SubmissionFactory(geo_location={'province': 'Mpumalanga'}, implementation_status='Planned', funding_type='Grant')
+    SubmissionFactory(geo_location={'province': 'Gauteng'}, implementation_status='Completed', funding_type='Loan')
+    client = api()
+
+    mpumalanga = client.get('/submission/facets/submission', headers={'X-NCCRD-Site': 'mccrd.localhost'}).json()
+    assert mpumalanga['implementation_status'] == ['Planned']
+    assert mpumalanga['funding_type'] == ['Grant']
+
+    national = client.get('/submission/facets/submission').json()
+    assert national['implementation_status'] == ['Completed', 'Planned']
