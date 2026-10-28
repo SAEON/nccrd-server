@@ -14,6 +14,8 @@ title, where it was only called "NCCRD": the interface shows both.
 
 Adds a site for each of the nine provinces. The Mpumalanga site has the
 title, texts and colours of the legacy MCCRD site (mccrd.environment.gov.za).
+Every province site also gets an About section of its own on climate change
+in the province (context).
 The other eight have no legacy site: they get the MCCRD's texts with their
 own names and a colour from their coat of arms. Each shows its coat of arms
 and a photo of a landmark of the province on its home page; the images are files of the web interface (public/sites/<slug>/).
@@ -79,6 +81,76 @@ FRONT_MATTER = {
             "society."
         ),
     },
+}
+
+#: Each province's own About section, "Climate change in <province>": its
+#: landscape, main climate risks and where its responses focus. Drafts for
+#: the provinces to review.
+CONTEXT = {
+    "eccrd": (
+        "The Eastern Cape stretches from the semi-arid Karoo to the subtropical Wild Coast. A long drought from "
+        "2015 strained water supplies in Nelson Mandela Bay and the Karoo towns, while coastal communities face "
+        "rising seas and storm surges. Climate responses here centre on water security, sustainable crop and "
+        "livestock farming, coastal management and the province\u2019s growing wind-energy sector."
+    ),
+    "fccrd": (
+        "The Free State is one of South Africa\u2019s main grain-producing provinces, so changing rainfall and "
+        "rising temperatures directly affect food security and rural livelihoods. Drought, heatwaves, hail and "
+        "veld fires are recurring hazards, and the Vaal and Orange rivers on its borders are vital to the "
+        "country\u2019s water supply. Climate responses focus on climate-smart agriculture, water conservation "
+        "and the management of grasslands and rangelands."
+    ),
+    "gccrd": (
+        "Gauteng is South Africa\u2019s smallest province by area but its most populous and its economic heart, "
+        "home to Johannesburg, Tshwane and Ekurhuleni. Its concentration of people, industry and transport makes "
+        "it a major source of greenhouse gas emissions, and dense settlements are exposed to urban heat, flash "
+        "floods and severe thunderstorms. Climate responses here centre on energy efficiency and renewable "
+        "energy, public transport, waste management, and more resilient infrastructure and settlements."
+    ),
+    "kccrd": (
+        "KwaZulu-Natal runs from the Drakensberg to the warm Indian Ocean coast and is home to Durban, one of "
+        "Africa\u2019s busiest ports. The province is highly exposed to extreme rainfall: the April 2022 floods "
+        "in eThekwini and surrounding areas were among the deadliest disasters in South Africa\u2019s history. "
+        "Climate responses focus on disaster risk reduction, flood-resilient infrastructure, coastal and "
+        "catchment management, and sugar-cane and smallholder farming."
+    ),
+    "lccrd": (
+        "Limpopo, in the far north, is among the hottest and driest parts of the country, and southern "
+        "Africa\u2019s interior is projected to warm faster than the global average. Drought and heat threaten "
+        "its fruit, vegetable and livestock farming and the communities that depend on them, as well as the "
+        "biodiversity of the Kruger National Park and the Mapungubwe area. Climate responses focus on water "
+        "security, climate-smart agriculture, and protecting ecosystems and the livelihoods they support."
+    ),
+    "mccrd": (
+        "Mpumalanga mines most of South Africa\u2019s coal and hosts most of its coal-fired power stations, "
+        "which puts it at the centre of the country\u2019s just energy transition; much of the province lies in "
+        "the Highveld air-quality priority area. Its escarpment, Lowveld and the Kruger National Park are rich in "
+        "biodiversity, and support tourism, forestry and farming that a changing climate puts at risk. Climate "
+        "responses focus on a just transition for coal-dependent workers and communities, cleaner energy and "
+        "air, and water and ecosystem protection."
+    ),
+    "ncccrd": (
+        "The Northern Cape is South Africa\u2019s largest and most sparsely populated province, and largely arid: "
+        "the Kalahari, the Karoo and Namaqualand. Its strong sunshine has made it the centre of the country\u2019s "
+        "solar-power build-out under the Renewable Energy Independent Power Producer Procurement Programme. "
+        "Climate change threatens its scarce water, livestock farming, the unique plants of the Succulent Karoo, "
+        "and communities along the Orange River."
+    ),
+    "nwccrd": (
+        "North West is a mining and farming province: its platinum belt around Rustenburg is among the richest "
+        "in the world, and it grows a large share of South Africa\u2019s maize and raises much of its livestock. "
+        "Drought and heat put pressure on water supplies, crops and grazing. Climate responses focus on water "
+        "security, climate-smart agriculture, and helping mining-dependent communities and the economy "
+        "diversify."
+    ),
+    "wccrd": (
+        "The Western Cape has a winter-rainfall climate and the Cape Floral Kingdom, one of the world\u2019s "
+        "richest plant regions. The 2015\u20132018 drought brought Cape Town close to \u201cDay Zero\u201d, when "
+        "municipal taps would have been turned off, and made the province a reference for managing water demand. "
+        "Wildfires, coastal storms, rising seas and pressure on fruit and wine farming are further risks. "
+        "Climate responses focus on water security, renewable energy and energy efficiency, and protecting "
+        "ecosystems and the coast."
+    ),
 }
 
 #: (slug, province as the projects' locations spell it). Short titles are the
@@ -211,6 +283,11 @@ LOGOS = {slug: {"logo_url": f"/sites/{slug}/arms.png"} for slug, _ in PROVINCES}
 LOGOS["mccrd"]["flag_url"] = "/sites/mccrd/flag.svg"
 
 
+def _in_prose(province: str) -> str:
+    """The province's name mid-sentence: "the Western Cape", but "Gauteng"."""
+    return f"the {province}" if province in ("Eastern Cape", "Free State", "Northern Cape", "Western Cape") else province
+
+
 def _site(slug: str, province: str) -> dict:
     names = {"title": f"{province} Climate Change Response Database", "short_title": slug.upper()}
     return {
@@ -223,8 +300,9 @@ def _site(slug: str, province: str) -> dict:
         "theme": json.dumps(_theme(slug)),
         "hero_image": json.dumps(dict(HERO_IMAGES[slug], url=f"/sites/{slug}/hero.jpg")),
         "front_matter": json.dumps({
-            key: {field: text.format(**names) for field, text in section.items()}
-            for key, section in FRONT_MATTER.items()
+            **{key: {field: text.format(**names) for field, text in section.items()}
+               for key, section in FRONT_MATTER.items()},
+            "context": {"title": f"Climate change in {_in_prose(province)}", "content": CONTEXT[slug]},
         }),
         **names,
     }
