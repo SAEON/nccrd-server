@@ -53,6 +53,26 @@ def test_site_is_resolved_from_header(api, sites, site, short_title):
     assert r.json()['short_title'] == short_title
 
 
+@pytest.mark.parametrize('province, short_title', [
+    ('mpumalanga', 'MCCRD'),
+    ('Mpumalanga', 'MCCRD'),
+    ('mpuma-langa', 'MCCRD'),      # punctuation doesn't matter (kwazulu-natal, north-west)
+    ('atlantis', None),            # no such province: as if it weren't given
+    ('---', None),
+])
+def test_site_is_resolved_from_province(api, sites, province, short_title):
+    client = api()
+    by_param = client.get('/site', params={'siteprovince': province})
+    by_header = client.get('/site', headers={'X-NCCRD-Site-Province': province})
+    assert by_param.status_code == by_header.status_code == 200
+    assert by_param.json()['short_title'] == by_header.json()['short_title'] == short_title
+
+
+def test_province_takes_precedence_over_the_hostname(api, sites):
+    r = api().get('/site', params={'siteprovince': 'mpumalanga'}, headers={'X-NCCRD-Site': 'unknown.example.org'})
+    assert r.json()['short_title'] == 'MCCRD'
+
+
 def test_site_returns_branding_publicly(api, sites):
     from starlette.testclient import TestClient
     import nccrd.api
@@ -94,7 +114,11 @@ def test_province_site_scopes_reports(api, sites):
     assert r.json()['total'] == 1
 
     # A download link names the site as a query parameter.
+    r = client.get('/report/export', params={'format': 'csv', 'siteprovince': 'mpumalanga'})
+    assert r.status_code == 200, r.text
+    by_province = r.text
     r = client.get('/report/export', params={'format': 'csv', 'site': 'mccrd.localhost'})
+    assert r.text == by_province
     assert r.status_code == 200, r.text
     assert [row['Title'] for row in csv.DictReader(io.StringIO(r.text.lstrip('\ufeff')))] == ['mp']
 
