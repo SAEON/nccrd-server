@@ -23,7 +23,9 @@ from nccrd.api.lib.auth import (
     user_of_password_reset_token,
     verify_password,
 )
+from nccrd.api.lib import notify
 from nccrd.api.lib.mail import send_mail
+from nccrd.api.lib.permissions import people_with_permission
 from nccrd.api.lib.tenant import get_current_tenant, site_address, site_name
 from nccrd.api.models import (
     ChangePasswordRequest,
@@ -35,7 +37,7 @@ from nccrd.api.models import (
 )
 from nccrd.config import nccrd_config
 from nccrd.db import get_db
-from nccrd.db.models.rbac import Tenant, User
+from nccrd.db.models.rbac import Login, Tenant, User
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +81,8 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     if user.registration_status in _REGISTRATION_BLOCKED:
         raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail=_REGISTRATION_BLOCKED[user.registration_status])
 
+    db.add(Login(user_id=user.id))  # the login log; shown as "last login" to admins
+    db.commit()
     token = create_access_token(user)
     return TokenResponse(
         access_token=token,
@@ -92,14 +96,20 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     status_code=202,
     summary="Request an account. An administrator approves it before it can log in.",
 )
-def register(body: RegisterRequest, db: Session = Depends(get_db)) -> dict:
+def register(
+        body: RegisterRequest,
+        request: Request,
+        background: BackgroundTasks,
+        db: Session = Depends(get_db),
+        tenant: Tenant = Depends(get_current_tenant),
+) -> dict:
     if not body.accept_privacy_notice:
         raise HTTPException(status_code=422, detail="Accept the privacy notice to request an account.")
     email = body.email.strip()
     if "@" not in email or email.startswith("@") or email.endswith("@"):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
     if _find_user(db, email) is None:
-        db.add(User(
+        person = User(
             name=body.name.strip(),
             email=email,
             organisation=body.organisation.strip(),
@@ -108,8 +118,12 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> dict:
             password_set_at=datetime.now(timezone.utc),
             registration_status="pending",
             privacy_notice_accepted_at=datetime.now(timezone.utc),
-        ))
+            registration_tenant_id=tenant.id,
+        )
+        db.add(person)
         db.commit()
+        admins = people_with_permission(db, "assign-role", tenant)
+        notify.account_requested(background, admins, person, tenant, site_address(request, tenant))
     return {"detail": _REGISTRATION_RECEIVED}
 
 

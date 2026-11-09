@@ -50,7 +50,7 @@ from starlette.requests import Request
 
 from nccrd.api.lib import notify
 from nccrd.api.lib.auth import Authorize, Authorized, OptionalAuthorize
-from nccrd.api.lib.permissions import RequirePermission, user_has_permission
+from nccrd.api.lib.permissions import RequirePermission, people_with_permission, user_has_permission
 from nccrd.api.lib.upload_template import build_upload_template
 from nccrd.api.lib.tenant import get_current_tenant, site_address
 from nccrd.api.models import (
@@ -526,6 +526,17 @@ def is_curator(db: Session, user_id: int, tenant: Tenant) -> bool:
     return any(user_has_permission(db, user_id, p, tenant.id) for p in CURATOR_PERMISSIONS)
 
 
+#: ``data_source`` of projects made in this app: the form's default, and the
+#: bulk upload's "bulk_upload: <file name>". Anything else was imported.
+APP_DATA_SOURCE = "react_app"
+BULK_UPLOAD_DATA_SOURCE = "bulk_upload"
+
+
+def made_in_app(submission: Submission) -> bool:
+    source = submission.data_source or APP_DATA_SOURCE
+    return source == APP_DATA_SOURCE or source.startswith(BULK_UPLOAD_DATA_SOURCE)
+
+
 def is_published(submission: Submission) -> bool:
     """The Python twin of ``REVIEW_STATUS_CONDITIONS["published"]``."""
     return bool(submission.issubmitted) and (submission.submission_status or "").strip().lower() == ACCEPTED.lower()
@@ -814,12 +825,57 @@ def read_submission(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+def _tell_reviewers(
+        db: Session,
+        background: BackgroundTasks,
+        request: Request,
+        submissions: List[Submission],
+        submitter_id: int,
+        changed: bool = False,
+) -> None:
+    """
+    Email the reviewers that ``submissions`` are waiting: those of each
+    province site the projects are on, and the national site's reviewers for
+    projects no province site has reviewers for. Not the submitter themself.
+    """
+    if not submissions:
+        return
+    titles = {s.id: s.title for s in submissions}
+    by_site = []
+    covered = set()
+    national = None
+    for site in db.query(Tenant).order_by(Tenant.id):
+        if site.is_default:
+            national = site
+            continue
+        reviewers = people_with_permission(db, REVIEW_PERMISSION, site, fall_back=False)
+        if not reviewers:
+            continue
+        query = db.query(Submission.id).filter(Submission.id.in_(list(titles)))
+        ids = [i for (i,) in _scope_to_tenant(query, site)]
+        if ids:
+            by_site.append((site, reviewers, ids))
+            covered.update(ids)
+    rest = [i for i in titles if i not in covered]
+    if rest and national is not None:
+        by_site.append((national, people_with_permission(db, REVIEW_PERMISSION, national), rest))
+
+    for site, reviewers, ids in by_site:
+        reviewers = [r for r in reviewers if r.id != submitter_id]
+        if reviewers:
+            notify.awaiting_review(
+                background, reviewers, site, site_address(request, site), [titles[i] for i in ids], changed,
+            )
+
+
 @router.post(
     "/new_submission",
     summary="Create a new submission and its related Mitigation / Adaptation records.",
 )
 def create_submission(
         submission: SubmissionCreate,
+        request: Request,
+        background: BackgroundTasks,
         db: Session = Depends(get_db),
         auth: Authorized = Depends(RequirePermission("create-submission")),
         tenant: Tenant = Depends(get_current_tenant),
@@ -860,7 +916,7 @@ def create_submission(
         issubmitted=True,
         platform=submission.platform,
         research=submission.research,
-        data_source=submission.data_source or "react_app",
+        data_source=submission.data_source or APP_DATA_SOURCE,
         createdby=auth.internal_user_id,
         createdate=datetime.utcnow(),
     )
@@ -893,6 +949,7 @@ def create_submission(
         _create_adaptation_record(db, db_submission.id, submission.adaptation_data)
 
     db.commit()
+    _tell_reviewers(db, background, request, [db_submission], auth.internal_user_id)
     return {
         "detail": "Submission and related records created successfully.",
         "submission_id": str(db_submission.id),
@@ -907,6 +964,8 @@ def create_submission(
 def update_submission(
         submission_uuid: UUID,
         update_data: SubmissionUpdate,
+        request: Request,
+        background: BackgroundTasks,
         db: Session = Depends(get_db),
         auth: Authorized = Depends(Authorize()),
         tenant: Tenant = Depends(get_current_tenant),
@@ -992,6 +1051,8 @@ def update_submission(
 
     db.commit()
     db.refresh(submission)
+    if not curator:
+        _tell_reviewers(db, background, request, [submission], auth.internal_user_id, changed=True)
     return submission
 
 
@@ -1031,10 +1092,10 @@ def review_submission(
         submission.issubmitted = True
     db.commit()
 
-    # Only for projects submitted here: imported ones (data_source set) were
-    # made in other systems, and their people never asked to hear from this one.
+    # Only for projects submitted here: imported ones were made in other
+    # systems, and their people never asked to hear from this one.
     submitter = db.get(User, submission.createdby) if submission.createdby else None
-    if changed and submission.data_source is None and submitter is not None and not submitter.deleted:
+    if changed and made_in_app(submission) and submitter is not None and not submitter.deleted:
         notify.submission_reviewed(
             background, submitter, submission, tenant, site_address(request, tenant), body.decision == ACCEPTED,
         )
@@ -1164,6 +1225,8 @@ async def upload_progress_report(
     ),
 )
 async def create_submission_upload_xlsx(
+        request: Request,
+        background: BackgroundTasks,
         file: UploadFile = File(...),
         data_source: Optional[str] = Query(default=None),
         contact_consent: bool = Query(
@@ -1317,6 +1380,7 @@ async def create_submission_upload_xlsx(
 
     # ── Batch insert in a single transaction ──────────────────────────────────
     created_ids: List[str] = []
+    created: List[Submission] = []
     try:
         for submission in submissions_to_create:
             geo_dict = (
@@ -1350,7 +1414,7 @@ async def create_submission_upload_xlsx(
                 issubmitted=True,
                 platform=submission.platform,
                 research=submission.research,
-                data_source=data_source or f"bulk_upload: {file.filename}",
+                data_source=data_source or f"{BULK_UPLOAD_DATA_SOURCE}: {file.filename}",
                 createdby=auth.internal_user_id,
                 createdate=datetime.utcnow(),
             )
@@ -1367,6 +1431,7 @@ async def create_submission_upload_xlsx(
                 _create_adaptation_record(db, db_submission.id, submission.adaptation_data)
 
             created_ids.append(str(db_submission.id))
+            created.append(db_submission)
 
         db.commit()
 
@@ -1378,6 +1443,7 @@ async def create_submission_upload_xlsx(
             detail="Batch insert failed.  All changes have been rolled back.",
         )
 
+    _tell_reviewers(db, background, request, created, auth.internal_user_id)
     return {
         "detail": f"{len(created_ids)} submission(s) created successfully.",
         "submission_ids": created_ids,

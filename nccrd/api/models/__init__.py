@@ -34,4 +34,8 @@ from .rbac import (
     CurrentUserResponse,
     RegistrationResponse,
     RegistrationApproval,
+    UserRoleDetail,
+    UserWithRoles,
+    SiteOption,
+    GrantOptions,
 )

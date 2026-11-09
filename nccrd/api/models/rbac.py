@@ -143,6 +143,41 @@ class CurrentUserResponse(BaseModel):
 UserCreateResponse.model_rebuild()
 
 
+class UserRoleDetail(BaseModel):
+    """One of a person's roles, on one site, for the user management page."""
+
+    id: int = Field(..., description="The assignment's id, to take the role away.")
+    role_id: int
+    role: str
+    tenant_id: int
+    site: str = Field(..., description="The site's short name, e.g. MCCRD.")
+
+
+class UserWithRoles(BaseModel):
+    """A person on the user management page, with the roles the caller can see."""
+
+    id: int
+    name: str
+    email: str
+    organisation: Optional[str] = None
+    created_at: datetime
+    last_login: Optional[datetime] = None
+    roles: List[UserRoleDetail]
+
+
+class SiteOption(BaseModel):
+    id: int
+    name: str
+    is_default: bool
+
+
+class GrantOptions(BaseModel):
+    """What the caller may hand out: the sites they manage and the roles they may grant."""
+
+    sites: List[SiteOption]
+    roles: List[RoleResponse]
+
+
 class RegistrationResponse(BaseModel):
     """A self sign-up request, for the admin's review queue."""
 

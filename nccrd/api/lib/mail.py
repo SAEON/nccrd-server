@@ -43,9 +43,14 @@ def send_mail(to: str, subject: str, body: str, *, sender_name: str = "NCCRD") -
         logger.warning("Mail is not set up (NCCRD_MAIL_HOST is empty), so this email was not sent: %r", subject)
         return False
 
+    sender = mail.FROM or mail.USERNAME
+    if not sender:
+        logger.warning("Mail has no sender address (set NCCRD_MAIL_FROM), so this email was not sent: %r", subject)
+        return False
+
     message = EmailMessage()
     message["Subject"] = subject
-    message["From"] = formataddr((sender_name, mail.FROM or mail.USERNAME or ""))
+    message["From"] = formataddr((sender_name, sender))
     message["To"] = to
     message.set_content(body)
     try:

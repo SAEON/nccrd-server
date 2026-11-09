@@ -174,8 +174,18 @@ def test_without_mail_set_up_nothing_is_sent_and_the_reply_is_the_same(api, memb
     assert 'Mail is not set up' in caplog.text
 
 
+def test_nothing_is_sent_without_a_sender_address(monkeypatch, caplog):
+    mail = nccrd_config.NCCRD.MAIL
+    for key, value in dict(HOST='smtp.example.org', USERNAME=None, FROM=None).items():
+        monkeypatch.setattr(mail, key, value)
+    monkeypatch.setattr(nccrd.api.lib.mail, '_deliver', lambda message: pytest.fail('sent'))
+    assert nccrd.api.lib.mail.send_mail('a@example.org', 'Hello', 'Body') is False
+    assert 'no sender address' in caplog.text
+
+
 def test_mail_server_failure_is_logged_not_raised(monkeypatch, caplog):
     monkeypatch.setattr(nccrd_config.NCCRD.MAIL, 'HOST', 'smtp.example.org')
+    monkeypatch.setattr(nccrd_config.NCCRD.MAIL, 'FROM', 'ict@example.org')
 
     def refuse(message):
         raise ConnectionRefusedError('no route')
@@ -244,7 +254,10 @@ def test_approved_and_rejected_requests_are_told(admin, outbox):
     role_id = TestSession.query(Role).filter(Role.name == 'user').one().id
     approved = _request_account(admin, 'sipho@example.org')
     rejected = _request_account(admin, 'lerato@example.org')
-    assert outbox == []  # asking sends nothing
+    # Asking tells the site's admins.
+    assert [(m['To'], m['Subject']) for m in outbox] == [('admin@example.org', 'New account request on NCCRD')] * 2
+    assert f'Review it at {SITE}/admin/registrations' in outbox[0].get_content()
+    outbox.clear()
 
     assert admin.post(f'/rbac/registrations/{approved}/approve', json={'role_id': role_id}).status_code == 200
     assert admin.post(f'/rbac/registrations/{rejected}/reject').status_code == 200
@@ -265,7 +278,8 @@ def reviewer(api, tenant):
 
 
 def test_submitter_is_told_the_review_outcome_once(reviewer, member, outbox):
-    project = SubmissionFactory(title='Solar pumps', createdby=member.id, submission_status='Pending')
+    project = SubmissionFactory(title='Solar pumps', createdby=member.id, submission_status='Pending',
+                                data_source='react_app')
 
     r = reviewer.post(f'/submission/{project.id}/review', json={'decision': 'Not accepted', 'comments': 'Add a budget'})
     assert r.status_code == 200, r.text
@@ -293,3 +307,13 @@ def test_reset_link_is_signed_for_its_purpose(member):
     token = nccrd.api.lib.auth.create_password_reset_token(member)
     with pytest.raises(jwt.InvalidSignatureError):
         jwt.decode(token, nccrd_config.NCCRD.JWT_SECRET, algorithms=['HS256'])
+
+
+@pytest.mark.parametrize('source, made_here', [
+    (None, True), ('react_app', True), ('bulk_upload: projects.xlsx', True),
+    ('sqlserver_legacy', False), ('gauteng_register_2024', False),
+])
+def test_projects_made_in_the_app_are_told_apart_from_imported_ones(source, made_here):
+    from nccrd.api.routers.submission import made_in_app
+    from nccrd.db.models import Submission
+    assert made_in_app(Submission(data_source=source)) is made_here

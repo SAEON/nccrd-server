@@ -39,6 +39,8 @@ class User(Base):
     registration_status = Column(String(20))
     organisation = Column(String(500))
     registration_note = Column(Text)
+    # The site the account was requested on; its admins review the request.
+    registration_tenant_id = Column(Integer, ForeignKey("nccrd.tenant.id"))
     # When the person accepted the privacy notice on signing up (POPIA).
     privacy_notice_accepted_at = Column(DateTime)
 
