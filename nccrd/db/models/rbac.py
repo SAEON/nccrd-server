@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -170,3 +170,17 @@ class DownloadLog(Base):
     timestamp = Column(DateTime, server_default=func.now(), nullable=False)
     submission_ids = Column(JSON)
     submission_search = Column(Text)
+    tenant_id = Column(Integer, ForeignKey("nccrd.tenant.id"))  # the site downloaded from
+
+
+class PageView(Base):
+    """How often a page of a site was viewed on a day. Counts only: no visitor
+    is identified, and no IP address or cookie is kept."""
+
+    __tablename__ = "page_view"
+    __table_args__ = {"schema": "nccrd"}
+
+    tenant_id = Column(Integer, ForeignKey("nccrd.tenant.id"), primary_key=True)
+    day = Column(Date, primary_key=True)
+    path = Column(String(200), primary_key=True)
+    views = Column(Integer, nullable=False, default=0)

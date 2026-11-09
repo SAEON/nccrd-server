@@ -421,6 +421,7 @@ def export(
     # Log only once the file is built: committing expires every loaded object,
     # and reading them afterwards would re-query each project one by one.
     db.add(DownloadLog(
+        tenant_id=tenant.id,
         submission_ids=[str(s.id) for s in submissions],
         submission_search=str(filters.as_dict()) if filters.as_dict() else None,
     ))
