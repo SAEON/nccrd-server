@@ -5,7 +5,7 @@ Pydantic v1 schemas for multi-tenant RBAC (User, Role, Permission, Tenant).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
 from pydantic import ConfigDict, BaseModel, Field
@@ -110,6 +110,33 @@ class SiteResponse(BaseModel):
     hero_image: Optional[dict] = None
     is_default: bool
     model_config = ConfigDict(from_attributes=True)
+
+
+#: The About page's sections, in the order it shows them.
+SITE_SECTIONS = ("about", "context", "explore", "submit")
+
+
+class SiteSection(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    content: str = Field("", max_length=6000, description="Plain text; a blank line starts a new paragraph.")
+
+
+class HeroCredit(BaseModel):
+    """Who took the front-page photo, and its licence, shown on the photo."""
+    credit: Optional[str] = Field(None, max_length=200)
+    license: Optional[str] = Field(None, max_length=100)
+    source_url: Optional[str] = Field(None, max_length=500, pattern=r"^https?://")
+    license_url: Optional[str] = Field(None, max_length=500, pattern=r"^https?://")
+
+
+class SiteUpdate(BaseModel):
+    """What a site's admin can change (permission edit-site). Left out = unchanged."""
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    short_title: Optional[str] = Field(None, min_length=1, max_length=20)
+    contact_email: Optional[str] = Field(None, max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    colour: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$", description="The main colour, e.g. #622700.")
+    sections: Optional[Dict[str, SiteSection]] = Field(None, description=f"About sections by key: {', '.join(SITE_SECTIONS)}.")
+    hero_credit: Optional[HeroCredit] = None
 
 
 class UserRoleTenantResponse(BaseModel):

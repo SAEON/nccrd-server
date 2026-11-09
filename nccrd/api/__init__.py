@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from nccrd.api.routers import auth, submission, region, rbac, report, vocabulary, pipeline, site
+from nccrd.api.routers.site import SITE_UPLOAD_DIR, SITE_UPLOAD_URL
 from nccrd.api.routers.submission import PROGRESS_REPORT_UPLOAD_DIR
 from nccrd.config import nccrd_config
 from nccrd.version import VERSION
@@ -46,6 +47,13 @@ app.mount(
     "/uploads/progress_reports",
     StaticFiles(directory=PROGRESS_REPORT_UPLOAD_DIR),
     name="progress_report_uploads",
+)
+
+# Serves the site images admins upload (emblem, flag, front-page photo).
+app.mount(
+    SITE_UPLOAD_URL,
+    StaticFiles(directory=SITE_UPLOAD_DIR),
+    name="site_uploads",
 )
 
 # app.include_router(survey.router, prefix='/survey', tags=['Survey'])
