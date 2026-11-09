@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from typing import List, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
 from nccrd.api.lib.auth import Authorize, Authorized, generate_temp_password, hash_password
 from nccrd.api.lib.permissions import RequirePermission
-from nccrd.api.lib.tenant import get_current_tenant
+from nccrd.api.lib import notify
+from nccrd.api.lib.tenant import get_current_tenant, site_address
 from nccrd.api.models import (
     CurrentUserResponse,
     PermissionResponse,
@@ -285,6 +287,8 @@ def _pending_registration(db: Session, user_id: int) -> User:
 def approve_registration(
         user_id: int,
         body: RegistrationApproval,
+        request: Request,
+        background: BackgroundTasks,
         db: Session = Depends(get_db),
         tenant: Tenant = Depends(get_current_tenant),
         auth: Authorized = Depends(RequirePermission("assign-role")),
@@ -296,6 +300,7 @@ def approve_registration(
     user.registration_status = "approved"
     db.commit()
     db.refresh(user)
+    notify.registration_approved(background, user, tenant, site_address(request, tenant))
     return user
 
 
@@ -306,11 +311,14 @@ def approve_registration(
 )
 def reject_registration(
         user_id: int,
+        background: BackgroundTasks,
         db: Session = Depends(get_db),
+        tenant: Tenant = Depends(get_current_tenant),
         auth: Authorized = Depends(RequirePermission("assign-role")),
 ) -> User:
     user = _pending_registration(db, user_id)
     user.registration_status = "rejected"
     db.commit()
     db.refresh(user)
+    notify.registration_rejected(background, user, tenant)
     return user

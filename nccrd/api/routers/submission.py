@@ -42,15 +42,17 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, Uni
 from uuid import UUID
 
 from pydantic import ValidationError
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, UploadFile, File, Form
 from openpyxl import load_workbook
 from sqlalchemy import Text, and_, cast, exists, func, or_, true
 from sqlalchemy.orm import Query as SAQuery, Session
+from starlette.requests import Request
 
+from nccrd.api.lib import notify
 from nccrd.api.lib.auth import Authorize, Authorized, OptionalAuthorize
 from nccrd.api.lib.permissions import RequirePermission, user_has_permission
 from nccrd.api.lib.upload_template import build_upload_template
-from nccrd.api.lib.tenant import get_current_tenant
+from nccrd.api.lib.tenant import get_current_tenant, site_address
 from nccrd.api.models import (
     ProgressReportResponse,
     SubmissionCreate,
@@ -1000,6 +1002,8 @@ def update_submission(
 def review_submission(
         submission_uuid: UUID,
         body: ReviewDecision,
+        request: Request,
+        background: BackgroundTasks,
         db: Session = Depends(get_db),
         tenant: Tenant = Depends(get_current_tenant),
         auth: Authorized = Depends(RequirePermission(REVIEW_PERMISSION)),
@@ -1019,12 +1023,21 @@ def review_submission(
     if body.decision == NOT_ACCEPTED and not comments:
         raise HTTPException(status_code=422, detail="Give a reason so the submitter knows what to fix.")
 
+    changed = (submission.submission_status, submission.submission_comments) != (body.decision, comments)
     submission.submission_status = body.decision
     submission.submission_comments = comments
     submission.submission_status_updated_by = auth.internal_user_id
     if body.decision == ACCEPTED:
         submission.issubmitted = True
     db.commit()
+
+    # Only for projects submitted here: imported ones (data_source set) were
+    # made in other systems, and their people never asked to hear from this one.
+    submitter = db.get(User, submission.createdby) if submission.createdby else None
+    if changed and submission.data_source is None and submitter is not None and not submitter.deleted:
+        notify.submission_reviewed(
+            background, submitter, submission, tenant, site_address(request, tenant), body.decision == ACCEPTED,
+        )
     return {
         "id": str(submission.id),
         "submission_status": submission.submission_status,

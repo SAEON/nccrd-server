@@ -2,18 +2,42 @@
 API router for local JWT authentication: login and password changes.
 """
 
+import logging
+import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
+from starlette.requests import Request
+from starlette.status import HTTP_400_BAD_REQUEST, HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
 
-from nccrd.api.lib.auth import Authorize, Authorized, create_access_token, hash_password, verify_password
-from nccrd.api.models import ChangePasswordRequest, LoginRequest, RegisterRequest, TokenResponse
+from nccrd.api.lib.auth import (
+    BLOCKED_REGISTRATIONS,
+    PASSWORD_RESET_MINUTES,
+    Authorize,
+    Authorized,
+    create_access_token,
+    create_password_reset_token,
+    hash_password,
+    user_of_password_reset_token,
+    verify_password,
+)
+from nccrd.api.lib.mail import send_mail
+from nccrd.api.lib.tenant import get_current_tenant, site_address, site_name
+from nccrd.api.models import (
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
+    LoginRequest,
+    RegisterRequest,
+    ResetPasswordRequest,
+    TokenResponse,
+)
 from nccrd.config import nccrd_config
 from nccrd.db import get_db
-from nccrd.db.models.rbac import User
+from nccrd.db.models.rbac import Tenant, User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -128,3 +152,85 @@ def change_password(
     user.password_set_at = datetime.now(timezone.utc)
     db.commit()
     return {"detail": "Password updated."}
+
+
+#: Same reply whether or not the email has an account (see _REGISTRATION_RECEIVED).
+_RESET_LINK_SENT = (
+    "If an account uses that email address, we've sent it a link to set a new password. "
+    f"The link works for {PASSWORD_RESET_MINUTES} minutes. Check your spam folder if it doesn't arrive."
+)
+
+#: At most one reset email per account in this many seconds, so the form
+#: can't be used to flood someone's inbox. Kept in memory, so per API worker
+#: process (4 in the container): enough to stop a flood, not an exact count.
+_RESET_MAIL_INTERVAL = 60
+_last_reset_mail = {}
+
+
+def _reset_mail_allowed(user_id: int) -> bool:
+    now = time.monotonic()
+    if now - _last_reset_mail.get(user_id, -_RESET_MAIL_INTERVAL) < _RESET_MAIL_INTERVAL:
+        return False
+    _last_reset_mail[user_id] = now
+    return True
+
+
+@router.post(
+    "/forgot-password",
+    status_code=202,
+    summary="Email a link to set a new password.",
+)
+def forgot_password(
+        body: ForgotPasswordRequest,
+        request: Request,
+        background: BackgroundTasks,
+        db: Session = Depends(get_db),
+        tenant: Tenant = Depends(get_current_tenant),
+) -> dict:
+    """
+    The link goes to the site the request came from (e.g. /mpumalanga). The
+    reply never says whether the email has an account, and the email is sent
+    after the reply, so its timing doesn't tell either.
+    """
+    user = _find_user(db, body.email)
+    if user is None or user.registration_status in BLOCKED_REGISTRATIONS or not _reset_mail_allowed(user.id):
+        return {"detail": _RESET_LINK_SENT}
+
+    address = site_address(request, tenant)
+    if address is None:
+        logger.error("No password reset link was sent: set NCCRD_UI_URL to the site's address.")
+        return {"detail": _RESET_LINK_SENT}
+
+    name = site_name(tenant)
+    # In the fragment, so the token never reaches a server log or a Referer header.
+    link = f"{address}/reset-password#token={create_password_reset_token(user)}"
+    background.add_task(
+        send_mail,
+        user.email,
+        f"Set a new password for {name}",
+        f"Hello {user.name},\n\n"
+        f"Someone asked to set a new password for your {name} account ({user.email}).\n"
+        f"To choose one, open this link within {PASSWORD_RESET_MINUTES} minutes:\n\n"
+        f"{link}\n\n"
+        "If you didn't ask for this, ignore this email: your password stays as it is.\n\n"
+        f"{tenant.title or name}\n",
+        sender_name=name,
+    )
+    return {"detail": _RESET_LINK_SENT}
+
+
+@router.post(
+    "/reset-password",
+    summary="Set a new password with the token from an emailed link.",
+)
+def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)) -> dict:
+    user = user_of_password_reset_token(db, body.token)
+    if user is None:
+        raise HTTPException(
+            status_code=HTTP_400_BAD_REQUEST,
+            detail="This link has expired or has already been used. Ask for a new one.",
+        )
+    user.password_hash = hash_password(body.new_password)
+    user.password_set_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"detail": "Your password is set. You can log in with it now."}

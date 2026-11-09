@@ -1,4 +1,5 @@
 import re
+from typing import Optional
 
 from fastapi import Depends, HTTPException
 from sqlalchemy import func
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR
 
+from nccrd.config import nccrd_config
 from nccrd.db import get_db
 from nccrd.db.models.rbac import Tenant
 
@@ -61,3 +63,39 @@ def get_current_tenant(request: Request, db: Session = Depends(get_db)) -> Tenan
         )
 
     return tenant
+
+
+def province_segment(province: str) -> str:
+    """A province site's first path segment, e.g. "KwaZulu-Natal" -> "kwazulu-natal"
+    (the interface's ``provinceParam``)."""
+    return re.sub(r"\s+", "-", province.strip().lower())
+
+
+def _allowed_origin(request: Request) -> Optional[str]:
+    """The browser's origin, if it is one the API is configured to trust (CORS)."""
+    origin = (request.headers.get("origin") or "").rstrip("/")
+    if not origin:
+        return None
+    allowed = {o.strip().rstrip("/") for o in nccrd_config.NCCRD.CORS_ORIGINS.split(",") if o.strip()}
+    pattern = nccrd_config.NCCRD.CORS_ORIGIN_REGEX
+    if origin in allowed or (pattern and re.fullmatch(pattern, origin)):
+        return origin
+    return None
+
+
+def site_address(request: Request, tenant: Tenant) -> Optional[str]:
+    """
+    The site's address for links in emails, e.g.
+    https://nccrd.environment.gov.za/mpumalanga: NCCRD_UI_URL, else the
+    browser's origin if trusted, plus the province's path. Never the Host
+    header, which a caller could set to send someone a link to another site.
+    """
+    base = (nccrd_config.NCCRD.UI_URL or "").rstrip("/") or _allowed_origin(request)
+    if not base:
+        return None
+    return f"{base}/{province_segment(tenant.province)}" if tenant.province else base
+
+
+def site_name(tenant: Tenant) -> str:
+    """The short name used in emails, e.g. "MCCRD"."""
+    return tenant.short_title or tenant.title or "NCCRD"

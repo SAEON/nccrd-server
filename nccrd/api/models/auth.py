@@ -39,3 +39,12 @@ class RegisterRequest(BaseModel):
     accept_privacy_notice: bool = Field(
         False, description="The person accepts the privacy notice (POPIA); required to sign up.",
     )
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=500, description="The account's email address.")
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=1, max_length=2000, description="The token from the emailed link.")
+    new_password: str = Field(..., min_length=8, description="The new password to set.")
