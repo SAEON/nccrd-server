@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -39,6 +39,10 @@ class User(Base):
     registration_status = Column(String(20))
     organisation = Column(String(500))
     registration_note = Column(Text)
+    # The site the account was requested on; its admins review the request.
+    registration_tenant_id = Column(Integer, ForeignKey("nccrd.tenant.id"))
+    # When the person accepted the privacy notice on signing up (POPIA).
+    privacy_notice_accepted_at = Column(DateTime)
 
     role_assignments = relationship(
         "UserXrefRoleXrefTenant",
@@ -97,6 +101,17 @@ class Tenant(Base):
     contact_email = Column(String(500))
     is_default = Column(Boolean, default=False, nullable=False)
     include_unbounded_submissions = Column(Boolean, default=False, nullable=False)
+    # Province sites (e.g. MCCRD): the first label of the site's address, so
+    # mccrd.environment.gov.za and mccrd.localhost are the same site; the
+    # province whose projects it lists; and its branding, including the
+    # home page photo (url, credit, licence, source_url).
+    slug = Column(String(50), unique=True)
+    short_title = Column(String(100))
+    province = Column(String(100))
+    logo_url = Column(String(500))  # the site's emblem, beside the DFFE logo
+    flag_url = Column(String(500))
+    front_matter = Column(JSON)
+    hero_image = Column(JSON)
 
 
 class TenantXrefSubmission(Base):
@@ -155,3 +170,17 @@ class DownloadLog(Base):
     timestamp = Column(DateTime, server_default=func.now(), nullable=False)
     submission_ids = Column(JSON)
     submission_search = Column(Text)
+    tenant_id = Column(Integer, ForeignKey("nccrd.tenant.id"))  # the site downloaded from
+
+
+class PageView(Base):
+    """How often a page of a site was viewed on a day. Counts only: no visitor
+    is identified, and no IP address or cookie is kept."""
+
+    __tablename__ = "page_view"
+    __table_args__ = {"schema": "nccrd"}
+
+    tenant_id = Column(Integer, ForeignKey("nccrd.tenant.id"), primary_key=True)
+    day = Column(Date, primary_key=True)
+    path = Column(String(200), primary_key=True)
+    views = Column(Integer, nullable=False, default=0)

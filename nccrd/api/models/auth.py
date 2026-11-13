@@ -36,3 +36,15 @@ class RegisterRequest(BaseModel):
     organisation: str = Field(..., min_length=1, max_length=500, description="Organisation the person works for.")
     password: str = Field(..., min_length=8, description="At least 8 characters.")
     note: Optional[str] = Field(None, max_length=2000, description="Why they need an account (shown to the admin).")
+    accept_privacy_notice: bool = Field(
+        False, description="The person accepts the privacy notice (POPIA); required to sign up.",
+    )
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=500, description="The account's email address.")
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=1, max_length=2000, description="The token from the emailed link.")
+    new_password: str = Field(..., min_length=8, description="The new password to set.")

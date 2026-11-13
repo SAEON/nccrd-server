@@ -126,6 +126,7 @@ def test_form_region_codes_are_stored_as_names_and_found_by_filters(api):
         'implementation_organization': 'City of Cape Town',
         'project_manager_name': 'A Capturer',
         'project_manager_email': 'capturer@example.org',
+        'contact_consent': True,
         'mitigation_data': {'sector': 'Energy'},
         'geo_location': {'province': 'WC', 'district': 'CPT', 'local_municipality': 'CPT', 'coordinates': [18.4, -33.9]},
     })

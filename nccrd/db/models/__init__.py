@@ -20,4 +20,5 @@ from .rbac import (
     UserXrefRoleXrefTenant,
     Login,
     DownloadLog,
+    PageView,
 )

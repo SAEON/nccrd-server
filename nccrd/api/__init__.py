@@ -5,7 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from nccrd.api.routers import auth, submission, region, rbac, report, vocabulary, pipeline
+from nccrd.api.routers import auth, submission, region, rbac, report, vocabulary, pipeline, site, stats
+from nccrd.api.routers.site import SITE_UPLOAD_DIR, SITE_UPLOAD_URL
 from nccrd.api.routers.submission import PROGRESS_REPORT_UPLOAD_DIR
 from nccrd.config import nccrd_config
 from nccrd.version import VERSION
@@ -39,12 +40,21 @@ app.include_router(rbac.router, prefix='/rbac', tags=['RBAC'])
 app.include_router(vocabulary.router, prefix='/vocabulary', tags=['Vocabulary'])
 app.include_router(report.router, prefix='/report', tags=['Report'])
 app.include_router(pipeline.router, prefix='/pipeline', tags=['Pipeline'])
+app.include_router(site.router, prefix='/site', tags=['Site'])
+app.include_router(stats.router, prefix='/stats', tags=['Stats'])
 
 # Serves progress-report (MRV) uploads back out — file_url values point here.
 app.mount(
     "/uploads/progress_reports",
     StaticFiles(directory=PROGRESS_REPORT_UPLOAD_DIR),
     name="progress_report_uploads",
+)
+
+# Serves the site images admins upload (emblem, flag, front-page photo).
+app.mount(
+    SITE_UPLOAD_URL,
+    StaticFiles(directory=SITE_UPLOAD_DIR),
+    name="site_uploads",
 )
 
 # app.include_router(survey.router, prefix='/survey', tags=['Survey'])
@@ -55,6 +65,7 @@ app.mount(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in nccrd_config.NCCRD.CORS_ORIGINS.split(',') if o.strip()],
+    allow_origin_regex=nccrd_config.NCCRD.CORS_ORIGIN_REGEX or None,
     allow_methods=["*"],
     allow_headers=["*"],
 )

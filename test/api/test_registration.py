@@ -9,7 +9,8 @@ from test import TestSession
 from test.factories import FactorySession
 
 REQUEST = {'name': 'Thandi M', 'email': 'Thandi.M@example.org', 'organisation': 'City of Joburg',
-           'password': 'a-long-password', 'note': 'I capture the city’s adaptation projects.'}
+           'password': 'a-long-password', 'note': 'I capture the city’s adaptation projects.',
+           'accept_privacy_notice': True}
 
 
 @pytest.fixture
@@ -64,7 +65,7 @@ def test_short_password_and_non_admin_are_refused(api, admin):
     assert capturer.get('/rbac/registrations').status_code == 403
 
 
-def test_rejected_input_is_not_echoed_back(api):
+def test_rejected_input_is_not_echoed_back(api, admin):
     """422s list what's wrong, not the submitted values (which include the password)."""
     r = api().post('/auth/register', json={'email': 'not-an-email', 'password': 'S3cret-Do-Not-Echo'})
     assert r.status_code == 422

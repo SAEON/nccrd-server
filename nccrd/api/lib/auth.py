@@ -87,6 +87,49 @@ def create_access_token(user: User) -> str:
     return jwt.encode(payload, nccrd_config.NCCRD.JWT_SECRET, algorithm=nccrd_config.NCCRD.JWT_ALGORITHM)
 
 
+#: How long a password reset link works.
+PASSWORD_RESET_MINUTES = 60
+_PASSWORD_RESET = "password-reset"
+
+#: Self-registered accounts that can't log in, so can't reset a password either.
+BLOCKED_REGISTRATIONS = ("pending", "rejected")
+
+
+def _password_reset_key(user: User) -> str:
+    """
+    Signs a reset link with the account's current password hash as well as
+    the secret, so a link stops working once it is used (bcrypt salts every
+    hash) and can never pass as an access token, or the other way round.
+    """
+    return f"{nccrd_config.NCCRD.JWT_SECRET}:{_PASSWORD_RESET}:{user.password_hash or ''}"
+
+
+def create_password_reset_token(user: User) -> str:
+    payload = {
+        "sub": str(user.id),
+        "purpose": _PASSWORD_RESET,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=PASSWORD_RESET_MINUTES),
+    }
+    return jwt.encode(payload, _password_reset_key(user), algorithm=nccrd_config.NCCRD.JWT_ALGORITHM)
+
+
+def user_of_password_reset_token(db: Session, token: str) -> Optional[User]:
+    """The account a reset link is for, or None if it is invalid, expired or already used."""
+    try:
+        # Only to find whose key to check the signature with.
+        user_id = int(jwt.decode(token, options={"verify_signature": False})["sub"])
+    except (jwt.InvalidTokenError, KeyError, TypeError, ValueError):
+        return None
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None or user.deleted or user.registration_status in BLOCKED_REGISTRATIONS:
+        return None
+    try:
+        claims = jwt.decode(token, _password_reset_key(user), algorithms=[nccrd_config.NCCRD.JWT_ALGORITHM])
+    except jwt.InvalidTokenError:
+        return None
+    return user if claims.get("purpose") == _PASSWORD_RESET else None
+
+
 def _decode_token(token: str) -> dict:
     try:
         return jwt.decode(
@@ -141,7 +184,7 @@ def _authorize_request(request: Request, db: Session) -> Authorized:
     user = db.query(User).filter(User.id == int(claims["sub"])).first()
     # Self-registered accounts can't act until approved (login refuses them
     # too; this also covers a token issued before a request was rejected).
-    if user is None or user.deleted or user.registration_status in ("pending", "rejected"):
+    if user is None or user.deleted or user.registration_status in BLOCKED_REGISTRATIONS:
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
             headers={'WWW-Authenticate': 'Bearer'},

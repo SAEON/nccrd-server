@@ -5,7 +5,7 @@ Pydantic v1 schemas for multi-tenant RBAC (User, Role, Permission, Tenant).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
 from pydantic import ConfigDict, BaseModel, Field
@@ -95,6 +95,50 @@ class TenantResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SiteResponse(BaseModel):
+    """What the web interface needs to show the current site: its names, the
+    province it covers, and its branding. Public: no IDs, roles or settings."""
+    hostname: str
+    title: Optional[str] = None
+    short_title: Optional[str] = None
+    province: Optional[str] = None
+    logo_url: Optional[str] = None
+    flag_url: Optional[str] = None
+    contact_email: Optional[str] = None
+    theme: Optional[dict] = None
+    front_matter: Optional[dict] = None
+    hero_image: Optional[dict] = None
+    is_default: bool
+    model_config = ConfigDict(from_attributes=True)
+
+
+#: The About page's sections, in the order it shows them.
+SITE_SECTIONS = ("about", "context", "explore", "submit")
+
+
+class SiteSection(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    content: str = Field("", max_length=6000, description="Plain text; a blank line starts a new paragraph.")
+
+
+class HeroCredit(BaseModel):
+    """Who took the front-page photo, and its licence, shown on the photo."""
+    credit: Optional[str] = Field(None, max_length=200)
+    license: Optional[str] = Field(None, max_length=100)
+    source_url: Optional[str] = Field(None, max_length=500, pattern=r"^https?://")
+    license_url: Optional[str] = Field(None, max_length=500, pattern=r"^https?://")
+
+
+class SiteUpdate(BaseModel):
+    """What a site's admin can change (permission edit-site). Left out = unchanged."""
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    short_title: Optional[str] = Field(None, min_length=1, max_length=20)
+    contact_email: Optional[str] = Field(None, max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    colour: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$", description="The main colour, e.g. #622700.")
+    sections: Optional[Dict[str, SiteSection]] = Field(None, description=f"About sections by key: {', '.join(SITE_SECTIONS)}.")
+    hero_credit: Optional[HeroCredit] = None
+
+
 class UserRoleTenantResponse(BaseModel):
     """A single user-role-tenant assignment, as used for permission checks."""
 
@@ -124,6 +168,41 @@ class CurrentUserResponse(BaseModel):
 
 
 UserCreateResponse.model_rebuild()
+
+
+class UserRoleDetail(BaseModel):
+    """One of a person's roles, on one site, for the user management page."""
+
+    id: int = Field(..., description="The assignment's id, to take the role away.")
+    role_id: int
+    role: str
+    tenant_id: int
+    site: str = Field(..., description="The site's short name, e.g. MCCRD.")
+
+
+class UserWithRoles(BaseModel):
+    """A person on the user management page, with the roles the caller can see."""
+
+    id: int
+    name: str
+    email: str
+    organisation: Optional[str] = None
+    created_at: datetime
+    last_login: Optional[datetime] = None
+    roles: List[UserRoleDetail]
+
+
+class SiteOption(BaseModel):
+    id: int
+    name: str
+    is_default: bool
+
+
+class GrantOptions(BaseModel):
+    """What the caller may hand out: the sites they manage and the roles they may grant."""
+
+    sites: List[SiteOption]
+    roles: List[RoleResponse]
 
 
 class RegistrationResponse(BaseModel):

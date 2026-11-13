@@ -12,7 +12,7 @@ Changelog vs. previous version
   endpoint are protected by ``Depends(RequirePermission(...))``, which checks
   authentication (``Authorize``) and an RBAC permission for the current tenant.
 * List/read endpoints and all write endpoints are scoped to the tenant
-  resolved from the request's Host header (see ``nccrd.api.lib.tenant``);
+  resolved from the request's site (see ``nccrd.api.lib.tenant``);
   writes also link the new submission to that tenant.
 * Bulk-upload endpoint (``create_submission_upload-xlsx``) completely rewritten:
   - Reads the first row as column headers (tabular format).
@@ -42,15 +42,17 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, Uni
 from uuid import UUID
 
 from pydantic import ValidationError
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, UploadFile, File, Form
 from openpyxl import load_workbook
 from sqlalchemy import Text, and_, cast, exists, func, or_, true
 from sqlalchemy.orm import Query as SAQuery, Session
+from starlette.requests import Request
 
+from nccrd.api.lib import notify
 from nccrd.api.lib.auth import Authorize, Authorized, OptionalAuthorize
-from nccrd.api.lib.permissions import RequirePermission, user_has_permission
+from nccrd.api.lib.permissions import RequirePermission, people_with_permission, user_has_permission
 from nccrd.api.lib.upload_template import build_upload_template
-from nccrd.api.lib.tenant import get_current_tenant
+from nccrd.api.lib.tenant import get_current_tenant, site_address
 from nccrd.api.models import (
     ProgressReportResponse,
     SubmissionCreate,
@@ -175,23 +177,31 @@ def _scope_to_tenant(query: SAQuery, tenant: Tenant) -> SAQuery:
     Restrict a ``Submission`` query to what ``tenant`` is allowed to see:
     submissions explicitly linked to it via ``tenant_xref_submission``, plus
     (when ``include_unbounded_submissions`` is set) submissions not linked to
-    any tenant at all.
+    any tenant at all, plus (on a province site) every submission located in
+    its province.
     """
-    linked = exists().where(
+    visible = [exists().where(
         and_(
             TenantXrefSubmission.submission_id == Submission.id,
             TenantXrefSubmission.tenant_id == tenant.id,
         )
-    )
+    )]
     if tenant.include_unbounded_submissions:
-        unbound = ~exists().where(TenantXrefSubmission.submission_id == Submission.id)
-        return query.filter(or_(linked, unbound))
-    return query.filter(linked)
+        visible.append(~exists().where(TenantXrefSubmission.submission_id == Submission.id))
+    if tenant.province:
+        visible.append(_province_filter(tenant.province))
+    return query.filter(or_(*visible))
 
 
 def _link_submission_to_tenant(db: Session, submission_id, tenant: Tenant) -> None:
-    """Record that ``submission_id`` belongs to ``tenant`` (multi-tenancy)."""
+    """Record that ``submission_id`` belongs to ``tenant`` (multi-tenancy). A
+    submission made on a province site is also linked to the default
+    (national) site, which lists every province's projects."""
     db.add(TenantXrefSubmission(tenant_id=tenant.id, submission_id=submission_id))
+    if not tenant.is_default:
+        national = db.query(Tenant).filter(Tenant.is_default.is_(True)).first()
+        if national is not None:
+            db.add(TenantXrefSubmission(tenant_id=national.id, submission_id=submission_id))
 
 
 #: Legacy vocabulary ids stored in place of a name (40-char SHA-1 hex); they
@@ -312,6 +322,28 @@ def _get_valid_vocabulary_terms(db: Session) -> Set[str]:
     """
     rows = db.query(Vocabulary.term).filter(Vocabulary.term.isnot(None)).all()
     return {row[0].strip().lower() for row in rows if row[0]}
+
+
+#: Workbook column heading of each field, for messages to the uploader.
+_COLUMN_OF: Dict[Tuple[str, ...], str] = {
+    **{(field,): column for column, field in GENERAL_COLUMN_MAP.items()},
+    **{("geo_location", field.removeprefix("_geo_")): column
+       for column, field in GENERAL_COLUMN_MAP.items() if field.startswith("_geo_")},
+    **{("adaptation_data", field): column for column, field in ADAPTATION_COLUMN_MAP.items()},
+    **{("mitigation_data", field): column for column, field in MITIGATION_COLUMN_MAP.items()},
+}
+
+
+def _schema_error(row_idx: int, error: Dict[str, Any]) -> Dict[str, Any]:
+    """A Pydantic error on a workbook row, in the shape of the taxonomy errors."""
+    loc = tuple(str(p) for p in error["loc"])
+    value = error.get("input")
+    return {
+        "row": row_idx,
+        "column": _COLUMN_OF.get(loc[:2]) or _COLUMN_OF.get(loc[:1]) or ".".join(loc),
+        "value": None if error["type"] == "missing" or isinstance(value, dict) else value,
+        "message": "Required." if error["type"] == "missing" else error["msg"],
+    }
 
 
 def _parse_sheet_rows(
@@ -452,12 +484,57 @@ CURATOR_PERMISSIONS = ("update-submission", REVIEW_PERMISSION, "change-submissio
 #: POST /{id}/review, ownership and audit columns are set by the server.
 _PROTECTED_FIELDS = {
     "submission_status", "submission_comments", "issubmitted", "createdby", "createdate",
-    "updatedate", "updatedby", "deletedby", "deletedate", "deleted",
+    "updatedate", "updatedby", "deletedby", "deletedate", "deleted", "contact_consent_at",
 }
+
+#: The project manager's contact details: personal information (POPIA). The
+#: submitter must confirm the manager agreed to them being held for the
+#: project (``contact_consent``), and only the owner and reviewers see the
+#: email and phone number.
+CONTACT_FIELDS = ("project_manager_name", "project_manager_email", "project_manager_contact_number")
+CONTACT_CONSENT_REQUIRED = (
+    "Confirm that the project manager agreed to their contact details being held for this project."
+)
+
+
+def _has_text(value) -> bool:
+    return bool(str(value or "").strip())
+
+
+def _contact_changes(submission: Submission, data: Dict[str, Any]) -> bool:
+    """Does ``data`` give the project manager contact details that differ from
+    what is stored? Clearing them, or resending the same ones, needs no new
+    consent."""
+    return any(
+        field in data and _has_text(data[field])
+        and str(data[field]).strip() != str(getattr(submission, field) or "").strip()
+        for field in CONTACT_FIELDS
+    )
+
+
+def _may_see_contact(db: Session, submission: Submission, uid: Optional[int], tenant: Tenant) -> bool:
+    """The project manager's email and phone are for the project's owner,
+    reviewers and curators, not the public."""
+    return uid is not None and (
+        submission.createdby == uid
+        or user_has_permission(db, uid, REVIEW_PERMISSION, tenant.id)
+        or is_curator(db, uid, tenant)
+    )
 
 
 def is_curator(db: Session, user_id: int, tenant: Tenant) -> bool:
     return any(user_has_permission(db, user_id, p, tenant.id) for p in CURATOR_PERMISSIONS)
+
+
+#: ``data_source`` of projects made in this app: the form's default, and the
+#: bulk upload's "bulk_upload: <file name>". Anything else was imported.
+APP_DATA_SOURCE = "react_app"
+BULK_UPLOAD_DATA_SOURCE = "bulk_upload"
+
+
+def made_in_app(submission: Submission) -> bool:
+    source = submission.data_source or APP_DATA_SOURCE
+    return source == APP_DATA_SOURCE or source.startswith(BULK_UPLOAD_DATA_SOURCE)
 
 
 def is_published(submission: Submission) -> bool:
@@ -662,7 +739,7 @@ def get_submissions_list(
 ) -> Response:
     """
     Return all non-deleted submissions visible to the tenant resolved from the
-    request's Host header, optionally filtered by any combination of facets.
+    request's site, optionally filtered by any combination of facets.
     """
     query = filtered_submissions(db, tenant, filters)
 
@@ -685,7 +762,7 @@ def read_submission(
         db: Session = Depends(get_db),
         tenant: Tenant = Depends(get_current_tenant),
         auth: Optional[Authorized] = Depends(OptionalAuthorize()),
-) -> Submission:
+) -> SubmissionResponse:
     """
     Fetch one submission by UUID and attach the relevant child records.
 
@@ -736,12 +813,59 @@ def read_submission(
         submission.mitigation = None
         submission.adaptation = None
 
-    return submission
+    response = SubmissionResponse.model_validate(submission)
+    if not _may_see_contact(db, submission, auth.internal_user_id if auth else None, tenant):
+        response.project_manager_email = None
+        response.project_manager_contact_number = None
+    return response
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # WRITE endpoints (require authentication + an RBAC permission)
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def _tell_reviewers(
+        db: Session,
+        background: BackgroundTasks,
+        request: Request,
+        submissions: List[Submission],
+        submitter_id: int,
+        changed: bool = False,
+) -> None:
+    """
+    Email the reviewers that ``submissions`` are waiting: those of each
+    province site the projects are on, and the national site's reviewers for
+    projects no province site has reviewers for. Not the submitter themself.
+    """
+    if not submissions:
+        return
+    titles = {s.id: s.title for s in submissions}
+    by_site = []
+    covered = set()
+    national = None
+    for site in db.query(Tenant).order_by(Tenant.id):
+        if site.is_default:
+            national = site
+            continue
+        reviewers = people_with_permission(db, REVIEW_PERMISSION, site, fall_back=False)
+        if not reviewers:
+            continue
+        query = db.query(Submission.id).filter(Submission.id.in_(list(titles)))
+        ids = [i for (i,) in _scope_to_tenant(query, site)]
+        if ids:
+            by_site.append((site, reviewers, ids))
+            covered.update(ids)
+    rest = [i for i in titles if i not in covered]
+    if rest and national is not None:
+        by_site.append((national, people_with_permission(db, REVIEW_PERMISSION, national), rest))
+
+    for site, reviewers, ids in by_site:
+        reviewers = [r for r in reviewers if r.id != submitter_id]
+        if reviewers:
+            notify.awaiting_review(
+                background, reviewers, site, site_address(request, site), [titles[i] for i in ids], changed,
+            )
 
 
 @router.post(
@@ -750,6 +874,8 @@ def read_submission(
 )
 def create_submission(
         submission: SubmissionCreate,
+        request: Request,
+        background: BackgroundTasks,
         db: Session = Depends(get_db),
         auth: Authorized = Depends(RequirePermission("create-submission")),
         tenant: Tenant = Depends(get_current_tenant),
@@ -758,6 +884,10 @@ def create_submission(
     Persist a new submission.  Mitigation / Adaptation child records are
     created automatically based on ``intervention_measurement``.
     """
+    gives_contact = any(_has_text(getattr(submission, f)) for f in CONTACT_FIELDS)
+    if gives_contact and not submission.contact_consent:
+        raise HTTPException(status_code=422, detail=CONTACT_CONSENT_REQUIRED)
+
     geo_dict = _region_codes_to_names(
         db, submission.geo_location.model_dump(exclude_none=True) if submission.geo_location else None
     )
@@ -781,11 +911,12 @@ def create_submission(
         project_manager_organization=submission.project_manager_organization,
         project_manager_email=submission.project_manager_email,
         project_manager_contact_number=submission.project_manager_contact_number,
+        contact_consent_at=datetime.utcnow() if gives_contact else None,
         submission_status="Pending",
         issubmitted=True,
         platform=submission.platform,
         research=submission.research,
-        data_source=submission.data_source or "react_app",
+        data_source=submission.data_source or APP_DATA_SOURCE,
         createdby=auth.internal_user_id,
         createdate=datetime.utcnow(),
     )
@@ -818,6 +949,7 @@ def create_submission(
         _create_adaptation_record(db, db_submission.id, submission.adaptation_data)
 
     db.commit()
+    _tell_reviewers(db, background, request, [db_submission], auth.internal_user_id)
     return {
         "detail": "Submission and related records created successfully.",
         "submission_id": str(db_submission.id),
@@ -832,6 +964,8 @@ def create_submission(
 def update_submission(
         submission_uuid: UUID,
         update_data: SubmissionUpdate,
+        request: Request,
+        background: BackgroundTasks,
         db: Session = Depends(get_db),
         auth: Authorized = Depends(Authorize()),
         tenant: Tenant = Depends(get_current_tenant),
@@ -861,6 +995,14 @@ def update_submission(
 
     if "expected_updatedate" in data:
         _check_not_modified_since(db, submission, data.pop("expected_updatedate"))
+
+    contact_consent = data.pop("contact_consent", None)
+    if _contact_changes(submission, data):
+        if not contact_consent:
+            raise HTTPException(status_code=422, detail=CONTACT_CONSENT_REQUIRED)
+        submission.contact_consent_at = datetime.utcnow()
+    elif contact_consent and submission.contact_consent_at is None:
+        submission.contact_consent_at = datetime.utcnow()
 
     # Pull nested payloads out before applying scalar updates.
     mitigation_update: Optional[Dict[str, Any]] = data.pop("mitigation_data", None)
@@ -909,6 +1051,8 @@ def update_submission(
 
     db.commit()
     db.refresh(submission)
+    if not curator:
+        _tell_reviewers(db, background, request, [submission], auth.internal_user_id, changed=True)
     return submission
 
 
@@ -919,6 +1063,8 @@ def update_submission(
 def review_submission(
         submission_uuid: UUID,
         body: ReviewDecision,
+        request: Request,
+        background: BackgroundTasks,
         db: Session = Depends(get_db),
         tenant: Tenant = Depends(get_current_tenant),
         auth: Authorized = Depends(RequirePermission(REVIEW_PERMISSION)),
@@ -938,12 +1084,21 @@ def review_submission(
     if body.decision == NOT_ACCEPTED and not comments:
         raise HTTPException(status_code=422, detail="Give a reason so the submitter knows what to fix.")
 
+    changed = (submission.submission_status, submission.submission_comments) != (body.decision, comments)
     submission.submission_status = body.decision
     submission.submission_comments = comments
     submission.submission_status_updated_by = auth.internal_user_id
     if body.decision == ACCEPTED:
         submission.issubmitted = True
     db.commit()
+
+    # Only for projects submitted here: imported ones were made in other
+    # systems, and their people never asked to hear from this one.
+    submitter = db.get(User, submission.createdby) if submission.createdby else None
+    if changed and made_in_app(submission) and submitter is not None and not submitter.deleted:
+        notify.submission_reviewed(
+            background, submitter, submission, tenant, site_address(request, tenant), body.decision == ACCEPTED,
+        )
     return {
         "id": str(submission.id),
         "submission_status": submission.submission_status,
@@ -1070,8 +1225,15 @@ async def upload_progress_report(
     ),
 )
 async def create_submission_upload_xlsx(
+        request: Request,
+        background: BackgroundTasks,
         file: UploadFile = File(...),
         data_source: Optional[str] = Query(default=None),
+        contact_consent: bool = Query(
+            default=False,
+            description="The uploader confirms the project managers listed agreed to their contact details "
+                        "being held for these projects (POPIA); required when the workbook gives any.",
+        ),
         db: Session = Depends(get_db),
         auth: Authorized = Depends(RequirePermission("upload-template")),
         tenant: Tenant = Depends(get_current_tenant),
@@ -1188,14 +1350,12 @@ async def create_submission_upload_xlsx(
             submission_obj = SubmissionCreate(**general_row)
             submissions_to_create.append(submission_obj)
         except ValidationError as exc:
-            # "field: message" per problem: Pydantic 2's own text adds type codes,
-            # documentation links and the whole row's values.
-            validation_errors.append({
-                "row": row_idx,
-                "error": "; ".join(f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()),
-            })
+            # One entry per problem, named by the workbook's column heading (the
+            # uploader never sees field names); Pydantic 2's own text adds type
+            # codes, documentation links and the whole row's values.
+            validation_errors.extend(_schema_error(row_idx, e) for e in exc.errors())
         except Exception as exc:
-            validation_errors.append({"row": row_idx, "error": str(exc)})
+            validation_errors.append({"row": row_idx, "message": str(exc)})
 
     # Reject the whole batch if any errors were found.
     if validation_errors:
@@ -1210,8 +1370,17 @@ async def create_submission_upload_xlsx(
             },
         )
 
+    gives_contact = any(_has_text(getattr(s, f)) for s in submissions_to_create for f in CONTACT_FIELDS)
+    if gives_contact and not contact_consent:
+        raise HTTPException(
+            status_code=422,
+            detail="Confirm that the project managers listed agreed to their contact details being held "
+                   "for these projects.",
+        )
+
     # ── Batch insert in a single transaction ──────────────────────────────────
     created_ids: List[str] = []
+    created: List[Submission] = []
     try:
         for submission in submissions_to_create:
             geo_dict = (
@@ -1238,11 +1407,14 @@ async def create_submission_upload_xlsx(
                 project_manager_organization=submission.project_manager_organization,
                 project_manager_email=submission.project_manager_email,
                 project_manager_contact_number=submission.project_manager_contact_number,
+                contact_consent_at=(
+                    datetime.utcnow() if any(_has_text(getattr(submission, f)) for f in CONTACT_FIELDS) else None
+                ),
                 submission_status="Pending",
                 issubmitted=True,
                 platform=submission.platform,
                 research=submission.research,
-                data_source=data_source or f"bulk_upload: {file.filename}",
+                data_source=data_source or f"{BULK_UPLOAD_DATA_SOURCE}: {file.filename}",
                 createdby=auth.internal_user_id,
                 createdate=datetime.utcnow(),
             )
@@ -1259,6 +1431,7 @@ async def create_submission_upload_xlsx(
                 _create_adaptation_record(db, db_submission.id, submission.adaptation_data)
 
             created_ids.append(str(db_submission.id))
+            created.append(db_submission)
 
         db.commit()
 
@@ -1270,6 +1443,7 @@ async def create_submission_upload_xlsx(
             detail="Batch insert failed.  All changes have been rolled back.",
         )
 
+    _tell_reviewers(db, background, request, created, auth.internal_user_id)
     return {
         "detail": f"{len(created_ids)} submission(s) created successfully.",
         "submission_ids": created_ids,

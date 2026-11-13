@@ -21,7 +21,7 @@ from .submission import (
     SubmissionResponse,
 )
 from .region import CountryModel, ProvinceModel, DistrictModel, LocalDistrictModel, NamedItemModel
-from .auth import LoginRequest, TokenResponse, ChangePasswordRequest, RegisterRequest
+from .auth import LoginRequest, TokenResponse, ChangePasswordRequest, RegisterRequest, ForgotPasswordRequest, ResetPasswordRequest
 from .rbac import (
     UserCreate,
     UserCreateResponse,
@@ -34,4 +34,8 @@ from .rbac import (
     CurrentUserResponse,
     RegistrationResponse,
     RegistrationApproval,
+    UserRoleDetail,
+    UserWithRoles,
+    SiteOption,
+    GrantOptions,
 )

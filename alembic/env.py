@@ -30,7 +30,8 @@ config = context.config
 config.set_main_option("sqlalchemy.url", nccrd_config.NCCRD.DB.URL)
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Leave loggers made before this alone (tests run migrations in-process).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

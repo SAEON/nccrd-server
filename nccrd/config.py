@@ -68,10 +68,31 @@ class NCCRDDBConfig(BaseConfig, DBConfigMixin):
     model_config = SettingsConfigDict(**_SHARED, env_prefix='NCCRD_DB_')
 
 
+class NCCRDMailConfig(BaseConfig):
+    """Outgoing mail (NCCRD_MAIL_*). With no HOST nothing is sent: each
+    email that would have gone out is logged as skipped instead."""
+
+    model_config = SettingsConfigDict(**_SHARED, env_prefix='NCCRD_MAIL_')
+
+    HOST: Optional[str] = None
+    PORT: int = 587
+    TLS: bool = True  # STARTTLS after connecting, as on port 587
+    SSL: bool = False  # TLS from the start instead, as on port 465
+    USERNAME: Optional[str] = None
+    PASSWORD: Optional[str] = None
+    # The sender's address; defaults to USERNAME.
+    FROM: Optional[str] = None
+    TIMEOUT: int = 30
+
+
 class NCCRDInnerConfig(BaseConfig):
     model_config = SettingsConfigDict(**_SHARED, env_prefix='NCCRD_')
 
     API_URL: Optional[str] = None
+    # The site's public address, e.g. https://nccrd.environment.gov.za, for
+    # links in emails. If unset, the browser's address is used when it is one
+    # of the allowed origins below.
+    UI_URL: Optional[str] = None
     JWT_SECRET: str
     JWT_ALGORITHM: str = 'HS256'
     JWT_EXPIRES_MINUTES: int = 480
@@ -86,9 +107,13 @@ class NCCRDInnerConfig(BaseConfig):
         'http://localhost:5174,http://127.0.0.1:5174,'
         'http://localhost:5175'
     )
+    # Origins allowed as a pattern: by default each site's local address in
+    # development, e.g. http://mccrd.localhost:5173 (see nccrd.api.lib.tenant).
+    CORS_ORIGIN_REGEX: str = r'http://[a-z0-9-]+\.localhost(:\d+)?'
 
     _subconfig: ClassVar[Dict[str, Union[Type[BaseConfig], BaseConfig]]] = {
         'DB': NCCRDDBConfig,
+        'MAIL': NCCRDMailConfig,
     }
 
 
